@@ -56,6 +56,7 @@ Options must appear before the first hostname.
 | `-dns-server <address>` | Use this resolver for advanced DNS queries. Port 53 is assumed when omitted. |
 | `-scan-ciphers` | Enumerate accepted TLS 1.0–1.2 cipher suites. This performs many extra connections. |
 | `-mail` | Inspect MX, SPF, DMARC, MTA-STS, and SMTP TLS reporting DNS records. |
+| `-version` | Print the `mpdc` version and exit. |
 
 `-json` and `-markdown` are mutually exclusive.
 
@@ -76,6 +77,20 @@ mpdc example.com www.example.com
 ```sh
 mpdc -json example.com
 ```
+
+JSON output remains an array with one object per requested hostname. Every
+object includes `"schema_version": 1`. Consumers should check this value before
+processing a result and reject schema versions they do not support.
+
+### Print the version
+
+```sh
+mpdc -version
+```
+
+This prints the program name and semantic version, for example `mpdc 0.1.0`.
+Release builds can override the source version with
+`-ldflags "-X main.version=<version>"`.
 
 ### Produce a Markdown table
 

@@ -30,7 +30,10 @@ import (
 
 const (
 	connectionTimeout = 5 * time.Second
+	jsonSchemaVersion = 1
 )
+
+var version = "0.1.0"
 
 type Finding struct {
 	Code     string `json:"code"`
@@ -193,6 +196,8 @@ type DNSDetails struct {
 }
 
 type Result struct {
+	SchemaVersion int `json:"schema_version"`
+
 	// Original fields remain populated for compatibility with existing JSON users.
 	Hostname   string    `json:"hostname"`
 	CNAME      string    `json:"cname,omitempty"`
@@ -227,7 +232,13 @@ func main() {
 	scanCiphers := flag.Bool("scan-ciphers", false, "Actively enumerate accepted TLS 1.0-1.2 cipher suites (slow)")
 	mail := flag.Bool("mail", false, "Inspect MX, SPF, DMARC, MTA-STS, and TLS reporting")
 	dnsServer := flag.String("dns-server", "", "DNS resolver for CAA, TLSA, HTTPS, TTL, and DNSSEC AD checks (default: system resolver)")
+	versionOutput := flag.Bool("version", false, "Print version information and exit")
 	flag.Parse()
+
+	if *versionOutput {
+		fmt.Printf("mpdc %s\n", version)
+		return
+	}
 
 	if *jsonOutput && *markdownOutput {
 		fmt.Fprintln(os.Stderr, "Error: --json and --markdown flags are mutually exclusive.")
@@ -304,7 +315,7 @@ func normalizeHostname(host string) string {
 }
 
 func inspectHost(host string, opts options) Result {
-	result := Result{Hostname: host}
+	result := Result{SchemaVersion: jsonSchemaVersion, Hostname: host}
 	if host == "" {
 		result.Error = "empty hostname"
 		result.Findings = append(result.Findings, finding("INPUT_INVALID", "critical", "The hostname is empty."))
