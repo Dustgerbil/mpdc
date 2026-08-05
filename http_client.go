@@ -29,33 +29,36 @@ func (scanner *httpScanner) fetchPage(rawURL, originalHost string, allowedHosts 
 }
 
 func (scanner *httpScanner) fetch(rawURL, originalHost string, allowedHosts map[string]bool, bodyLimit int64) httpFetchResult {
-	page := HTTPPageResult{RequestedURL: rawURL, ContentLength: -1}
+	page := HTTPPageResult{RequestedURL: redactURLForOutput(rawURL), ContentLength: -1}
 	current, err := url.Parse(rawURL)
 	if err != nil {
-		page.Error = fmt.Sprintf("HTTP request URL %q is invalid: %v", rawURL, err)
+		page.Error = fmt.Sprintf("HTTP request URL %q is invalid: %v", page.RequestedURL, redactURLParseError(err, rawURL))
 		return httpFetchResult{page: page}
 	}
 	initialHost, err := normalizedURLHost(current)
 	if err != nil || initialHost != originalHost {
-		page.Error = fmt.Sprintf("HTTP request URL %q does not use original hostname %q", rawURL, originalHost)
+		page.Error = fmt.Sprintf("HTTP request URL %q does not use original hostname %q", page.RequestedURL, originalHost)
 		return httpFetchResult{page: page}
 	}
 	visited := make(map[string]bool)
 
 	for {
-		currentURL := canonicalURL(current)
-		if visited[currentURL] {
+		currentURLRaw := canonicalURL(current)
+		currentURL := redactURLForOutput(currentURLRaw)
+		if visited[currentURLRaw] {
 			page.Error = fmt.Sprintf("redirect loop detected at %s", currentURL)
 			page.Findings = append(page.Findings, finding("HTTP_REDIRECT_LOOP", "warning",
-				fmt.Sprintf("%s entered a redirect loop at %s.", rawURL, currentURL)))
+				fmt.Sprintf("%s entered a redirect loop at %s.", page.RequestedURL, currentURL)))
 			page.FinalURL = currentURL
+			page.finalURLRaw = currentURLRaw
 			return httpFetchResult{page: page}
 		}
-		visited[currentURL] = true
+		visited[currentURLRaw] = true
 
 		response, remoteIP, err := scanner.doSingleRequest(current)
 		if err != nil {
 			page.FinalURL = currentURL
+			page.finalURLRaw = currentURLRaw
 			page.Error = fmt.Sprintf("GET %s: %v", currentURL, err)
 			if errors.Is(err, errHTTPAddressBlocked) {
 				page.Findings = append(page.Findings, finding("HTTP_TARGET_ADDRESS_BLOCKED", "info",
@@ -65,6 +68,7 @@ func (scanner *httpScanner) fetch(rawURL, originalHost string, allowedHosts map[
 		}
 
 		page.FinalURL = currentURL
+		page.finalURLRaw = currentURLRaw
 		page.StatusCode = response.StatusCode
 		page.HTTPProtocol = response.Proto
 		page.RemoteIP = remoteIP
@@ -76,7 +80,7 @@ func (scanner *httpScanner) fetch(rawURL, originalHost string, allowedHosts map[
 		if isRedirectStatus(response.StatusCode) {
 			location := response.Header.Get("Location")
 			closeResponseBody(response.Body)
-			hop := RedirectHop{FromURL: currentURL, StatusCode: response.StatusCode, Location: redactURLUserinfo(location)}
+			hop := RedirectHop{FromURL: currentURL, StatusCode: response.StatusCode, Location: redactURLForOutput(location)}
 			if location == "" {
 				hop.StopReason = "missing_location"
 				page.RedirectChain = append(page.RedirectChain, hop)
@@ -87,11 +91,12 @@ func (scanner *httpScanner) fetch(rawURL, originalHost string, allowedHosts map[
 			if err != nil {
 				hop.StopReason = "malformed_location"
 				page.RedirectChain = append(page.RedirectChain, hop)
-				page.Error = fmt.Sprintf("redirect from %s had malformed Location %q: %v", currentURL, location, err)
+				page.Error = fmt.Sprintf("redirect from %s had malformed Location %q: %v", currentURL, hop.Location, redactURLParseError(err, location))
 				return httpFetchResult{page: page}
 			}
 			next.Fragment = ""
-			hop.ResolvedURL = redactURLUserinfo(canonicalURL(next))
+			nextURLRaw := canonicalURL(next)
+			hop.ResolvedURL = redactURLForOutput(nextURLRaw)
 			if next.Scheme != "http" && next.Scheme != "https" {
 				hop.StopReason = "unsupported_scheme"
 				page.RedirectChain = append(page.RedirectChain, hop)
@@ -126,18 +131,18 @@ func (scanner *httpScanner) fetch(rawURL, originalHost string, allowedHosts map[
 					fmt.Sprintf("%s redirected to out-of-scope hostname %s; the redirect was recorded but not followed.", currentURL, nextHost)))
 				return httpFetchResult{page: page}
 			}
-			if visited[hop.ResolvedURL] {
+			if visited[nextURLRaw] {
 				hop.StopReason = "loop"
 				page.RedirectChain = append(page.RedirectChain, hop)
 				page.Findings = append(page.Findings, finding("HTTP_REDIRECT_LOOP", "warning",
-					fmt.Sprintf("%s entered a redirect loop at %s.", rawURL, hop.ResolvedURL)))
+					fmt.Sprintf("%s entered a redirect loop at %s.", page.RequestedURL, hop.ResolvedURL)))
 				return httpFetchResult{page: page}
 			}
 			if len(page.RedirectChain) >= scanner.options.MaxRedirects {
 				hop.StopReason = "redirect_limit"
 				page.RedirectChain = append(page.RedirectChain, hop)
 				page.Findings = append(page.Findings, finding("HTTP_REDIRECT_LIMIT_REACHED", "warning",
-					fmt.Sprintf("%s reached the configured redirect limit of %d at %s.", rawURL, scanner.options.MaxRedirects, currentURL)))
+					fmt.Sprintf("%s reached the configured redirect limit of %d at %s.", page.RequestedURL, scanner.options.MaxRedirects, currentURL)))
 				return httpFetchResult{page: page}
 			}
 			hop.Followed = true
@@ -157,6 +162,31 @@ func (scanner *httpScanner) fetch(rawURL, originalHost string, allowedHosts map[
 }
 
 var errHTTPAddressBlocked = errors.New("HTTP target address blocked")
+
+// egressHTTPDialer is the final policy gate at the socket boundary. It accepts
+// only literal, public IP addresses on the two permitted HTTP ports, even when
+// a caller has already validated and pinned DNS results.
+type egressHTTPDialer struct {
+	next httpDialer
+}
+
+func (dialer egressHTTPDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if network != "tcp" && network != "tcp4" && network != "tcp6" {
+		return nil, fmt.Errorf("%w: network %q is not permitted", errHTTPAddressBlocked, network)
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid dial address", errHTTPAddressBlocked)
+	}
+	if port != "80" && port != "443" {
+		return nil, fmt.Errorf("%w: port %q is not permitted", errHTTPAddressBlocked, port)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || blockedHTTPAddress(ip) {
+		return nil, fmt.Errorf("%w: dial address %q is not globally reachable", errHTTPAddressBlocked, host)
+	}
+	return dialer.next.DialContext(ctx, network, address)
+}
 
 func (scanner *httpScanner) doSingleRequest(target *url.URL) (*http.Response, string, error) {
 	if target.Scheme != "http" && target.Scheme != "https" {
@@ -188,6 +218,7 @@ func (scanner *httpScanner) doSingleRequest(target *url.URL) (*http.Response, st
 	}
 
 	port := httpURLPort(target)
+	egressDialer := egressHTTPDialer{next: scanner.dialer}
 	transport := &http.Transport{
 		Proxy:                  nil,
 		DisableKeepAlives:      true,
@@ -205,7 +236,7 @@ func (scanner *httpScanner) doSingleRequest(target *url.URL) (*http.Response, st
 	transport.DialContext = func(dialContext context.Context, network, _ string) (net.Conn, error) {
 		var lastErr error
 		for _, ip := range ips {
-			conn, err := scanner.dialer.DialContext(dialContext, network, net.JoinHostPort(ip.String(), port))
+			conn, err := egressDialer.DialContext(dialContext, network, net.JoinHostPort(ip.String(), port))
 			if err == nil {
 				return conn, nil
 			}
@@ -242,7 +273,7 @@ func (scanner *httpScanner) doSingleRequest(target *url.URL) (*http.Response, st
 	if err != nil {
 		cancel()
 		transport.CloseIdleConnections()
-		return nil, remoteIP, err
+		return nil, remoteIP, redactedHTTPError{err: err, rawURL: target.String(), safeURL: redactURLForOutput(target.String())}
 	}
 	response.Body = &cancelOnCloseBody{ReadCloser: response.Body, cancel: cancel}
 	return response, remoteIP, nil
@@ -259,13 +290,69 @@ func (body *cancelOnCloseBody) Close() error {
 	return err
 }
 
-func redactURLUserinfo(value string) string {
+type redactedHTTPError struct {
+	err     error
+	rawURL  string
+	safeURL string
+}
+
+func (err redactedHTTPError) Error() string {
+	return strings.ReplaceAll(err.err.Error(), err.rawURL, err.safeURL)
+}
+
+func (err redactedHTTPError) Unwrap() error { return err.err }
+
+func redactURLForOutput(value string) string {
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.User == nil {
-		return value
+	if err != nil {
+		return redactRawURLQuery(value)
 	}
-	parsed.User = url.User("[redacted]")
+	if parsed.User != nil {
+		parsed.User = url.User("[redacted]")
+	}
+	parsed.RawQuery = redactRawQuery(parsed.RawQuery)
 	return parsed.String()
+}
+
+func redactRawURLQuery(value string) string {
+	beforeFragment, fragment, hasFragment := strings.Cut(value, "#")
+	base, query, hasQuery := strings.Cut(beforeFragment, "?")
+	if hasQuery {
+		beforeFragment = base + "?" + redactRawQuery(query)
+	}
+	if hasFragment {
+		return beforeFragment + "#" + fragment
+	}
+	return beforeFragment
+}
+
+func redactRawQuery(query string) string {
+	if query == "" {
+		return ""
+	}
+	var result strings.Builder
+	for len(query) > 0 {
+		separator := strings.IndexAny(query, "&;")
+		parameter := query
+		if separator >= 0 {
+			parameter = query[:separator]
+		}
+		name, _, hasValue := strings.Cut(parameter, "=")
+		result.WriteString(name)
+		if hasValue {
+			result.WriteString("=[redacted]")
+		}
+		if separator < 0 {
+			break
+		}
+		result.WriteByte(query[separator])
+		query = query[separator+1:]
+	}
+	return result.String()
+}
+
+func redactURLParseError(err error, rawURL string) string {
+	return strings.ReplaceAll(err.Error(), rawURL, redactURLForOutput(rawURL))
 }
 
 func readAndCloseBody(body io.ReadCloser, limit int64) ([]byte, int64, bool, error) {

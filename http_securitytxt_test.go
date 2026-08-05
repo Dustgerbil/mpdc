@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -43,6 +44,51 @@ func TestSecurityTXTInvalidExpiredAndSigned(t *testing.T) {
 	result = parseSecurityTXTPage(base, []byte("-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\nContact: mailto:security@example.com\nExpires: 2031-01-01T00:00:00Z\n-----BEGIN PGP SIGNATURE-----\n"), now)
 	if !result.Signed {
 		t.Fatal("cleartext signature was not observed")
+	}
+}
+
+func TestSecurityTXTCanonicalHTTPSAndLanguageValidation(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	page := HTTPPageResult{
+		RequestedURL: "https://example.com/.well-known/security.txt",
+		FinalURL:     "https://example.com/.well-known/security.txt",
+		finalURLRaw:  "https://example.com/.well-known/security.txt",
+		StatusCode:   200,
+		ContentType:  "text/plain",
+	}
+	valid := []byte("Contact: mailto:security@example.com\nExpires: 2031-01-01T00:00:00Z\nCanonical: https://EXAMPLE.com:443/.well-known/security.txt\nPreferred-Languages: en, zh-Hant-TW, de-CH-1901, x-private\n")
+	result := parseSecurityTXTPage(page, valid, now)
+	if len(result.Findings) != 0 || len(result.PreferredLanguages) != 4 {
+		t.Fatalf("valid Canonical/languages result = %+v", result)
+	}
+
+	invalid := []byte("Contact: http://example.com/report\nExpires: 2031-01-01T00:00:00Z\nCanonical: https://example.com/security.txt\nPolicy: http://example.com/policy\nPreferred-Languages: en_US\nPreferred-Languages: en\n")
+	result = parseSecurityTXTPage(page, invalid, now)
+	assertFindingCode(t, result.Findings, "SECURITY_TXT_INVALID")
+	message := result.Findings[len(result.Findings)-1].Message
+	for _, expected := range []string{"web URIs must use HTTPS", "absent from Canonical", "Preferred-Languages", "RFC 5646"} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("invalid finding did not mention %q: %s", expected, message)
+		}
+	}
+}
+
+func TestSecurityTXTCanonicalUsesRawURLButRedactsOutput(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	page := HTTPPageResult{
+		RequestedURL: "https://example.com/.well-known/security.txt",
+		FinalURL:     "https://example.com/.well-known/security.txt?token=[redacted]",
+		finalURLRaw:  "https://example.com/.well-known/security.txt?token=secret-token",
+		StatusCode:   200,
+		ContentType:  "text/plain",
+	}
+	body := []byte("Contact: mailto:security@example.com\nExpires: 2031-01-01T00:00:00Z\nCanonical: https://example.com/.well-known/security.txt?token=secret-token\n")
+	result := parseSecurityTXTPage(page, body, now)
+	if len(result.Findings) != 0 {
+		t.Fatalf("matching raw Canonical findings = %+v", result.Findings)
+	}
+	if len(result.Canonical) != 1 || strings.Contains(result.Canonical[0], "secret-token") || !strings.Contains(result.Canonical[0], "token=[redacted]") {
+		t.Fatalf("Canonical output was not redacted: %+v", result.Canonical)
 	}
 }
 

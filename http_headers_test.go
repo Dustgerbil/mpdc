@@ -96,6 +96,42 @@ func TestFramingPrecedenceAndXFOValidation(t *testing.T) {
 	assertFindingCode(t, evaluateFraming("https://example.com/", nil, []string{"DENY", "SAMEORIGIN"}), "X_FRAME_OPTIONS_INVALID")
 }
 
+func TestFrameAncestorsSourceListSemantics(t *testing.T) {
+	for _, policy := range []string{
+		"frame-ancestors 'none'",
+		"frame-ancestors 'self'",
+		"frame-ancestors https://portal.example *.trusted.example",
+	} {
+		if findings := evaluateFraming("https://example.com/", []string{policy}, nil); len(findings) != 0 {
+			t.Errorf("restrictive %q findings = %+v", policy, findings)
+		}
+	}
+
+	for _, policy := range []string{
+		"frame-ancestors *",
+		"frame-ancestors https:",
+		"frame-ancestors https://*",
+	} {
+		findings := evaluateFraming("https://example.com/", []string{policy}, []string{"DENY"})
+		assertFindingCode(t, findings, "CLICKJACKING_PROTECTION_MISSING")
+	}
+
+	for _, policy := range []string{
+		"frame-ancestors",
+		"frame-ancestors 'none' https://portal.example",
+		"frame-ancestors 'unsafe-inline'",
+		"frame-ancestors https://bad.example?query=value",
+	} {
+		findings := evaluateCSP("https://example.com/", []string{policy}, nil)
+		assertFindingCode(t, findings, "CSP_INVALID")
+		assertFindingCode(t, evaluateFraming("https://example.com/", []string{policy}, nil), "CLICKJACKING_PROTECTION_MISSING")
+	}
+
+	if findings := evaluateFraming("https://example.com/", []string{"frame-ancestors *", "frame-ancestors 'self'"}, nil); len(findings) != 0 {
+		t.Fatalf("combined CSP policies should retain the restrictive intersection: %+v", findings)
+	}
+}
+
 func TestReferrerAndPermissionsPolicies(t *testing.T) {
 	assertFindingCode(t, evaluateReferrerPolicy("https://example.com/", nil), "REFERRER_POLICY_MISSING")
 	assertFindingCode(t, evaluateReferrerPolicy("https://example.com/", []string{"origin, unsafe-url"}), "REFERRER_POLICY_UNSAFE_URL")

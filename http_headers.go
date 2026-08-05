@@ -197,7 +197,11 @@ func effectiveScriptSources(policy cspPolicy) ([]string, bool) {
 func evaluateCSP(urlValue string, enforced, reportOnly []string) []Finding {
 	var findings []Finding
 	for _, value := range reportOnly {
-		if _, err := parseCSP(value); err != nil {
+		policy, err := parseCSP(value)
+		if err == nil {
+			err = validateFrameAncestorsDirective(policy)
+		}
+		if err != nil {
 			findings = append(findings, finding("CSP_INVALID", "warning",
 				fmt.Sprintf("%s returned an invalid report-only CSP: %v.", urlValue, err)))
 		}
@@ -212,11 +216,15 @@ func evaluateCSP(urlValue string, enforced, reportOnly []string) []Finding {
 	}
 	policies := make([]cspPolicy, 0, len(enforced))
 	for _, value := range enforced {
-		policy, err := parseCSP(value)
-		if err != nil {
+		policy, parseErr := parseCSP(value)
+		if parseErr != nil {
+			findings = append(findings, finding("CSP_INVALID", "warning",
+				fmt.Sprintf("%s returned an invalid enforced CSP: %v.", urlValue, parseErr)))
+			continue
+		}
+		if err := validateFrameAncestorsDirective(policy); err != nil {
 			findings = append(findings, finding("CSP_INVALID", "warning",
 				fmt.Sprintf("%s returned an invalid enforced CSP: %v.", urlValue, err)))
-			continue
 		}
 		policies = append(policies, policy)
 	}
@@ -326,13 +334,22 @@ func validBase64Value(value string, requiredBytes int) bool {
 }
 
 func evaluateFraming(urlValue string, cspValues, xfoValues []string) []Finding {
+	frameAncestorsSeen := false
 	for _, value := range cspValues {
 		policy, err := parseCSP(value)
 		if err == nil {
-			if sources, ok := policy["frame-ancestors"]; ok && len(sources) > 0 {
-				return nil
+			if sources, ok := policy["frame-ancestors"]; ok {
+				frameAncestorsSeen = true
+				classification, _ := classifyFrameAncestors(sources)
+				if classification == frameAncestorsRestrictive {
+					return nil
+				}
 			}
 		}
+	}
+	if frameAncestorsSeen {
+		return []Finding{finding("CLICKJACKING_PROTECTION_MISSING", "warning",
+			fmt.Sprintf("%s has a CSP frame-ancestors directive that does not impose a valid origin restriction.", urlValue))}
 	}
 	if len(xfoValues) == 0 {
 		return []Finding{finding("CLICKJACKING_PROTECTION_MISSING", "warning",
@@ -358,6 +375,81 @@ func evaluateFraming(urlValue string, cspValues, xfoValues []string) []Finding {
 			fmt.Sprintf("%s returned an empty X-Frame-Options policy.", urlValue))}
 	}
 	return nil
+}
+
+type frameAncestorsClassification int
+
+const (
+	frameAncestorsInvalid frameAncestorsClassification = iota
+	frameAncestorsUnrestricted
+	frameAncestorsRestrictive
+)
+
+func validateFrameAncestorsDirective(policy cspPolicy) error {
+	sources, present := policy["frame-ancestors"]
+	if !present {
+		return nil
+	}
+	_, err := classifyFrameAncestors(sources)
+	return err
+}
+
+func classifyFrameAncestors(sources []string) (frameAncestorsClassification, error) {
+	if len(sources) == 0 {
+		return frameAncestorsInvalid, fmt.Errorf("frame-ancestors has no source list")
+	}
+	if len(sources) == 1 && strings.EqualFold(sources[0], "'none'") {
+		return frameAncestorsRestrictive, nil
+	}
+	unrestricted := false
+	for _, source := range sources {
+		switch {
+		case strings.EqualFold(source, "'none'"):
+			return frameAncestorsInvalid, fmt.Errorf("frame-ancestors 'none' must be the only source")
+		case strings.EqualFold(source, "'self'"):
+			continue
+		case source == "*":
+			unrestricted = true
+		case cspSchemeSourcePattern.MatchString(source):
+			unrestricted = true
+		case validFrameAncestorHostSource(source):
+			if frameAncestorHostIsWildcard(source) {
+				unrestricted = true
+			}
+		default:
+			return frameAncestorsInvalid, fmt.Errorf("frame-ancestors contains invalid source %q", source)
+		}
+	}
+	if unrestricted {
+		return frameAncestorsUnrestricted, nil
+	}
+	return frameAncestorsRestrictive, nil
+}
+
+var (
+	cspSchemeSourcePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:$`)
+	cspHostSourcePattern   = regexp.MustCompile(`^(?:(?:\*\.)?[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\*)(?::(?:\*|[0-9]+))?(?:/[^\s]*)?$`)
+)
+
+func validFrameAncestorHostSource(source string) bool {
+	if scheme, remainder, ok := strings.Cut(source, "://"); ok {
+		return cspSchemeSourcePattern.MatchString(scheme+":") && cspHostSourcePattern.MatchString(remainder)
+	}
+	return cspHostSourcePattern.MatchString(source)
+}
+
+func frameAncestorHostIsWildcard(source string) bool {
+	if _, remainder, ok := strings.Cut(source, "://"); ok {
+		source = remainder
+	}
+	host := source
+	if slash := strings.IndexByte(host, '/'); slash >= 0 {
+		host = host[:slash]
+	}
+	if colon := strings.LastIndexByte(host, ':'); colon >= 0 {
+		host = host[:colon]
+	}
+	return host == "*"
 }
 
 var validReferrerPolicies = map[string]bool{

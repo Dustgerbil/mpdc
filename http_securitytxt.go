@@ -88,6 +88,9 @@ func parseSecurityTXTPage(page HTTPPageResult, body []byte, now time.Time) Secur
 	expiresSeen := false
 	expiresValid := false
 	expiresCount := 0
+	canonicalCount := 0
+	var canonicalRaw []string
+	preferredLanguagesCount := 0
 	for lineNumber, raw := range strings.Split(text, "\n") {
 		line := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "-----") || strings.HasPrefix(line, "Hash:") {
@@ -102,10 +105,10 @@ func parseSecurityTXTPage(page HTTPPageResult, body []byte, now time.Time) Secur
 		}
 		switch strings.ToLower(name) {
 		case "contact":
-			if validSecurityTXTURI(value) {
-				result.Contacts = append(result.Contacts, value)
+			if err := validateSecurityTXTURI("Contact", value); err == nil {
+				result.Contacts = append(result.Contacts, redactURLForOutput(value))
 			} else {
-				invalidReasons = append(invalidReasons, fmt.Sprintf("Contact value %q was not an absolute URI", value))
+				invalidReasons = append(invalidReasons, fmt.Sprintf("Contact value %q was invalid: %v", redactURLForOutput(value), err))
 			}
 		case "expires":
 			expiresSeen = true
@@ -118,33 +121,38 @@ func parseSecurityTXTPage(page HTTPPageResult, body []byte, now time.Time) Secur
 				expiresValid = true
 			}
 		case "canonical":
-			if validSecurityTXTURI(value) {
-				result.Canonical = append(result.Canonical, value)
+			canonicalCount++
+			if err := validateSecurityTXTURI("Canonical", value); err == nil {
+				result.Canonical = append(result.Canonical, redactURLForOutput(value))
+				canonicalRaw = append(canonicalRaw, value)
 			} else {
-				invalidReasons = append(invalidReasons, fmt.Sprintf("Canonical value %q was not an absolute URI", value))
+				invalidReasons = append(invalidReasons, fmt.Sprintf("Canonical value %q was invalid: %v", redactURLForOutput(value), err))
 			}
 		case "policy":
-			if validSecurityTXTURI(value) {
-				result.Policy = append(result.Policy, value)
+			if err := validateSecurityTXTURI("Policy", value); err == nil {
+				result.Policy = append(result.Policy, redactURLForOutput(value))
 			} else {
-				invalidReasons = append(invalidReasons, fmt.Sprintf("Policy value %q was not an absolute URI", value))
+				invalidReasons = append(invalidReasons, fmt.Sprintf("Policy value %q was invalid: %v", redactURLForOutput(value), err))
 			}
 		case "encryption":
-			if validSecurityTXTURI(value) {
-				result.Encryption = append(result.Encryption, value)
+			if err := validateSecurityTXTURI("Encryption", value); err == nil {
+				result.Encryption = append(result.Encryption, redactURLForOutput(value))
 			} else {
-				invalidReasons = append(invalidReasons, fmt.Sprintf("Encryption value %q was not an absolute URI", value))
+				invalidReasons = append(invalidReasons, fmt.Sprintf("Encryption value %q was invalid: %v", redactURLForOutput(value), err))
 			}
 		case "preferred-languages":
+			preferredLanguagesCount++
 			for _, language := range strings.Split(value, ",") {
 				language = strings.TrimSpace(language)
-				if language != "" {
+				if validLanguageTag(language) {
 					result.PreferredLanguages = append(result.PreferredLanguages, language)
+				} else {
+					invalidReasons = append(invalidReasons, fmt.Sprintf("Preferred-Languages tag %q was not a valid RFC 5646 language tag", language))
 				}
 			}
 		case "acknowledgments", "hiring":
-			if !validSecurityTXTURI(value) {
-				invalidReasons = append(invalidReasons, fmt.Sprintf("%s value %q was not an absolute URI", name, value))
+			if err := validateSecurityTXTURI(name, value); err != nil {
+				invalidReasons = append(invalidReasons, fmt.Sprintf("%s value %q was invalid: %v", name, redactURLForOutput(value), err))
 			}
 		default:
 			unknown[name] = true
@@ -161,6 +169,12 @@ func parseSecurityTXTPage(page HTTPPageResult, body []byte, now time.Time) Secur
 	} else if !result.Expires.After(now) {
 		result.Findings = append(result.Findings, finding("SECURITY_TXT_EXPIRED", "warning",
 			fmt.Sprintf("%s security.txt expired at %s.", page.FinalURL, result.Expires.Format(time.RFC3339))))
+	}
+	if canonicalCount > 0 && !canonicalContainsRetrievalURI(canonicalRaw, securityTXTRetrievalURL(page)) {
+		invalidReasons = append(invalidReasons, fmt.Sprintf("retrieval URI %q was absent from Canonical fields", page.FinalURL))
+	}
+	if preferredLanguagesCount > 1 {
+		invalidReasons = append(invalidReasons, fmt.Sprintf("%d Preferred-Languages fields were present", preferredLanguagesCount))
 	}
 	for name := range unknown {
 		result.UnknownFieldNames = append(result.UnknownFieldNames, name)
@@ -224,7 +238,163 @@ func redirectTarget(chain []RedirectHop) string {
 	return chain[len(chain)-1].ResolvedURL
 }
 
-func validSecurityTXTURI(value string) bool {
+func validateSecurityTXTURI(field, value string) error {
 	parsed, err := url.Parse(value)
-	return err == nil && parsed.IsAbs() && parsed.Scheme != "" && parsed.Fragment == ""
+	if err != nil || !parsed.IsAbs() || parsed.Scheme == "" {
+		return fmt.Errorf("not an absolute URI")
+	}
+	if parsed.Fragment != "" {
+		return fmt.Errorf("fragments are not permitted")
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme == "http" {
+		return fmt.Errorf("web URIs must use HTTPS")
+	}
+	if scheme == "https" && parsed.Hostname() == "" {
+		return fmt.Errorf("HTTPS URI has no hostname")
+	}
+	switch strings.ToLower(field) {
+	case "canonical", "policy", "acknowledgments", "hiring":
+		if scheme != "https" {
+			return fmt.Errorf("%s must use an HTTPS URI", field)
+		}
+	}
+	return nil
 }
+
+func securityTXTRetrievalURL(page HTTPPageResult) string {
+	if page.finalURLRaw != "" {
+		return page.finalURLRaw
+	}
+	return page.FinalURL
+}
+
+func canonicalContainsRetrievalURI(values []string, retrieval string) bool {
+	retrievalURL, err := url.Parse(retrieval)
+	if err != nil || retrievalURL.Scheme == "" || retrievalURL.Hostname() == "" {
+		return false
+	}
+	want := canonicalURL(retrievalURL)
+	for _, value := range values {
+		candidate, err := url.Parse(value)
+		if err == nil && canonicalURL(candidate) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func validLanguageTag(value string) bool {
+	if grandfatheredLanguageTags[strings.ToLower(value)] {
+		return true
+	}
+	parts := strings.Split(value, "-")
+	if len(parts) == 0 || parts[0] == "" {
+		return false
+	}
+	if strings.EqualFold(parts[0], "x") {
+		return len(parts) > 1 && allLanguageSubtags(parts[1:], 1, 8)
+	}
+	if !asciiLetters(parts[0], 2, 8) {
+		return false
+	}
+	index := 1
+	if len(parts[0]) <= 3 {
+		for count := 0; count < 3 && index < len(parts) && asciiLetters(parts[index], 3, 3); count++ {
+			index++
+		}
+	}
+	if index < len(parts) && asciiLetters(parts[index], 4, 4) {
+		index++
+	}
+	if index < len(parts) && (asciiLetters(parts[index], 2, 2) || asciiDigits(parts[index], 3, 3)) {
+		index++
+	}
+	variants := make(map[string]bool)
+	for index < len(parts) && (asciiAlphanumeric(parts[index], 5, 8) || len(parts[index]) == 4 && isASCIIDigit(parts[index][0]) && asciiAlphanumeric(parts[index], 4, 4)) {
+		variant := strings.ToLower(parts[index])
+		if variants[variant] {
+			return false
+		}
+		variants[variant] = true
+		index++
+	}
+	extensions := make(map[string]bool)
+	for index < len(parts) && len(parts[index]) == 1 && asciiAlphanumeric(parts[index], 1, 1) && !strings.EqualFold(parts[index], "x") {
+		singleton := strings.ToLower(parts[index])
+		if extensions[singleton] {
+			return false
+		}
+		extensions[singleton] = true
+		index++
+		start := index
+		for index < len(parts) && asciiAlphanumeric(parts[index], 2, 8) {
+			index++
+		}
+		if index == start {
+			return false
+		}
+	}
+	if index < len(parts) && strings.EqualFold(parts[index], "x") {
+		index++
+		return index < len(parts) && allLanguageSubtags(parts[index:], 1, 8)
+	}
+	return index == len(parts)
+}
+
+var grandfatheredLanguageTags = map[string]bool{
+	"art-lojban": true, "cel-gaulish": true, "en-gb-oed": true,
+	"i-ami": true, "i-bnn": true, "i-default": true, "i-enochian": true,
+	"i-hak": true, "i-klingon": true, "i-lux": true, "i-mingo": true,
+	"i-navajo": true, "i-pwn": true, "i-tao": true, "i-tay": true, "i-tsu": true,
+	"no-bok": true, "no-nyn": true, "sgn-be-fr": true, "sgn-be-nl": true,
+	"sgn-ch-de": true, "zh-guoyu": true, "zh-hakka": true, "zh-min": true,
+	"zh-min-nan": true, "zh-xiang": true,
+}
+
+func allLanguageSubtags(parts []string, minimum, maximum int) bool {
+	for _, part := range parts {
+		if !asciiAlphanumeric(part, minimum, maximum) {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiLetters(value string, minimum, maximum int) bool {
+	if len(value) < minimum || len(value) > maximum {
+		return false
+	}
+	for i := range len(value) {
+		if value[i] < 'A' || value[i] > 'Z' && value[i] < 'a' || value[i] > 'z' {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiDigits(value string, minimum, maximum int) bool {
+	if len(value) < minimum || len(value) > maximum {
+		return false
+	}
+	for i := range len(value) {
+		if !isASCIIDigit(value[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiAlphanumeric(value string, minimum, maximum int) bool {
+	if len(value) < minimum || len(value) > maximum {
+		return false
+	}
+	for i := range len(value) {
+		if !isASCIIDigit(value[i]) && (value[i] < 'A' || value[i] > 'Z' && value[i] < 'a' || value[i] > 'z') {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIDigit(value byte) bool { return value >= '0' && value <= '9' }

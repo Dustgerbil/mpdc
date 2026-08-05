@@ -264,14 +264,19 @@ on the original hostname or a hostname explicitly listed with
 loopback, private, link-local, multicast, unspecified, documentation,
 carrier-grade NAT, reserved, and metadata-style addresses are blocked. If any
 resolved address is blocked, the destination is not contacted. Internationalized
-hostnames must be supplied in their ASCII punycode form.
+hostnames must be supplied in their ASCII punycode form. A second egress gate at
+the socket boundary accepts only literal, globally reachable addresses on TCP
+ports 80 and 443. Deployments should retain an equivalent host, container, or
+network firewall deny policy as an independent control; the process does not
+attempt to reconfigure the operator's firewall.
 
 The scanner records status, protocol, remote address, content metadata, bounded
 byte counts, redirects, selected browser-security headers, redacted cookie
 attributes, and parsed `security.txt` fields. Cookie values, raw `Set-Cookie`
 headers, response bodies, page text, and raw `security.txt` content are never
-included in output. Bodies are read only to a configured decoded-byte limit and
-discarded.
+included in output. URL userinfo and query parameter values are redacted while
+query parameter names are retained for redirect comparison. Bodies are read only
+to a configured decoded-byte limit and discarded.
 
 HTTP mode does not crawl, discover subdomains or paths, execute JavaScript,
 fetch page resources, authenticate, submit forms, replay cookies, fuzz, exploit,

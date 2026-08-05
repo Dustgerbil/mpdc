@@ -54,6 +54,7 @@ type HTTPPageResult struct {
 	Cookies         []CookieObservation `json:"cookies,omitempty"`
 	Findings        []Finding           `json:"findings,omitempty"`
 	Error           string              `json:"error,omitempty"`
+	finalURLRaw     string
 }
 
 type RedirectHop struct {
@@ -338,28 +339,79 @@ func deduplicateStrings(values []string) []string {
 	return result
 }
 
+// These tables are maintained from the IANA IPv4 and IPv6 Special-Purpose
+// Address Registries (last reviewed 2026-08-05). Parent prefixes with a small
+// number of globally reachable exceptions are denied here and explicitly
+// allowed below. IPv6 is additionally restricted to 2000::/3, the IANA global
+// unicast allocation, so newly assigned non-global space fails closed.
+var nonGlobalHTTPPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("224.0.0.0/4"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("::/128"),
+	netip.MustParsePrefix("::1/128"),
+	netip.MustParsePrefix("::ffff:0:0/96"),
+	// Translation prefixes can embed otherwise-blocked IPv4 destinations.
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("100:0:0:1::/64"),
+	netip.MustParsePrefix("2001::/23"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("3fff::/20"),
+	netip.MustParsePrefix("5f00::/16"),
+	netip.MustParsePrefix("fc00::/7"),
+	netip.MustParsePrefix("fe80::/10"),
+	netip.MustParsePrefix("ff00::/8"),
+}
+
+var globalHTTPPrefixExceptions = []netip.Prefix{
+	netip.MustParsePrefix("192.0.0.9/32"),
+	netip.MustParsePrefix("192.0.0.10/32"),
+	netip.MustParsePrefix("2001:1::1/128"),
+	netip.MustParsePrefix("2001:1::2/128"),
+	netip.MustParsePrefix("2001:1::3/128"),
+	netip.MustParsePrefix("2001:3::/32"),
+	netip.MustParsePrefix("2001:4:112::/48"),
+	netip.MustParsePrefix("2001:20::/28"),
+	netip.MustParsePrefix("2001:30::/28"),
+}
+
+var globalIPv6HTTPPrefix = netip.MustParsePrefix("2000::/3")
+
 func blockedHTTPAddress(ip net.IP) bool {
 	address, ok := netip.AddrFromSlice(ip)
 	if !ok {
 		return true
 	}
 	address = address.Unmap()
+	for _, prefix := range globalHTTPPrefixExceptions {
+		if prefix.Contains(address) {
+			return false
+		}
+	}
 	if address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast() ||
 		address.IsLinkLocalMulticast() || address.IsMulticast() || address.IsUnspecified() ||
 		!address.IsGlobalUnicast() {
 		return true
 	}
-	blocked := []netip.Prefix{
-		netip.MustParsePrefix("100.64.0.0/10"),
-		netip.MustParsePrefix("192.0.0.0/24"),
-		netip.MustParsePrefix("192.0.2.0/24"),
-		netip.MustParsePrefix("198.18.0.0/15"),
-		netip.MustParsePrefix("198.51.100.0/24"),
-		netip.MustParsePrefix("203.0.113.0/24"),
-		netip.MustParsePrefix("240.0.0.0/4"),
-		netip.MustParsePrefix("2001:db8::/32"),
+	if address.Is6() && !globalIPv6HTTPPrefix.Contains(address) {
+		return true
 	}
-	for _, prefix := range blocked {
+	for _, prefix := range nonGlobalHTTPPrefixes {
 		if prefix.Contains(address) {
 			return true
 		}

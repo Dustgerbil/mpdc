@@ -239,6 +239,59 @@ func TestBlockedAddressNeverDialed(t *testing.T) {
 	}
 }
 
+func TestSpecialPurposeHTTPAddressPolicy(t *testing.T) {
+	tests := []struct {
+		address string
+		blocked bool
+	}{
+		{"0.1.2.3", true},
+		{"192.0.0.8", true},
+		{"192.0.0.9", false},
+		{"192.88.99.2", true},
+		{"8.8.8.8", false},
+		{"64:ff9b::808:808", true},
+		{"100::1", true},
+		{"2001::1", true},
+		{"2001:1::1", false},
+		{"2001:db8::1", true},
+		{"2002::1", true},
+		{"2606:4700:4700::1111", false},
+		{"4000::1", true},
+	}
+	for _, test := range tests {
+		t.Run(test.address, func(t *testing.T) {
+			if got := blockedHTTPAddress(net.ParseIP(test.address)); got != test.blocked {
+				t.Fatalf("blockedHTTPAddress(%s) = %t, want %t", test.address, got, test.blocked)
+			}
+		})
+	}
+}
+
+func TestEgressHTTPDialerEnforcesLiteralPublicAddressAndPort(t *testing.T) {
+	next := &routeDialer{}
+	dialer := egressHTTPDialer{next: next}
+	for _, test := range []struct {
+		network string
+		address string
+	}{
+		{"tcp", "127.0.0.1:443"},
+		{"tcp", "example.com:443"},
+		{"tcp", "8.8.8.8:8443"},
+		{"udp", "8.8.8.8:443"},
+	} {
+		if _, err := dialer.DialContext(context.Background(), test.network, test.address); !errors.Is(err, errHTTPAddressBlocked) {
+			t.Errorf("DialContext(%q, %q) error = %v", test.network, test.address, err)
+		}
+	}
+	if next.calls.Load() != 0 {
+		t.Fatalf("blocked egress reached underlying dialer %d times", next.calls.Load())
+	}
+	_, err := dialer.DialContext(context.Background(), "tcp", "8.8.8.8:443")
+	if errors.Is(err, errHTTPAddressBlocked) || next.calls.Load() != 1 {
+		t.Fatalf("public egress did not reach underlying dialer: calls=%d err=%v", next.calls.Load(), err)
+	}
+}
+
 func TestBodyHeaderLimitsAndTimeout(t *testing.T) {
 	t.Run("body", func(t *testing.T) {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
@@ -311,6 +364,60 @@ func TestRedirectUserinfoIsRejectedAndRedacted(t *testing.T) {
 	}
 	if page.Error == "" || strings.Contains(string(encoded), "secret") {
 		t.Fatalf("userinfo was not safely rejected: %s", encoded)
+	}
+}
+
+func TestRedirectQueryValuesAreRedactedEverywhere(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/start" {
+			response.Header().Set("Location", "/next?state=state-secret&nonce=nonce-secret&flag")
+			response.WriteHeader(http.StatusFound)
+			return
+		}
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	dialer := &routeDialer{httpsAddress: server.Listener.Addr().String()}
+	page, _ := testScanner(defaultHTTPOptions(), dialer).fetchPage(
+		"https://example.com/start?initial=initial-secret", "example.com", map[string]bool{"example.com": true}, 16, false)
+	encoded, err := json.Marshal(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(encoded)
+	for _, secret := range []string{"state-secret", "nonce-secret", "initial-secret"} {
+		if strings.Contains(output, secret) {
+			t.Fatalf("JSON retained query value %q: %s", secret, output)
+		}
+	}
+	for _, parameter := range []string{"initial=[redacted]", "state=[redacted]", "nonce=[redacted]", "flag"} {
+		if !strings.Contains(output, parameter) {
+			t.Fatalf("JSON did not preserve redacted parameter %q: %s", parameter, output)
+		}
+	}
+	if strings.Contains(page.Error, "secret") {
+		t.Fatalf("error retained query value: %q", page.Error)
+	}
+
+	failedPage, _ := testScanner(defaultHTTPOptions(), &routeDialer{}).fetchPage(
+		"https://example.com/fail?error_token=error-secret", "example.com", map[string]bool{"example.com": true}, 16, false)
+	failedJSON, err := json.Marshal(failedPage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failedPage.Error == "" || strings.Contains(string(failedJSON), "error-secret") || !strings.Contains(string(failedJSON), "error_token=[redacted]") {
+		t.Fatalf("error output was not query-redacted: %s", failedJSON)
+	}
+}
+
+func TestURLRedactionHandlesMalformedValues(t *testing.T) {
+	redacted := redactURLForOutput("https://user:password@example.com/path?state=secret&flag#fragment")
+	if strings.Contains(redacted, "password") || strings.Contains(redacted, "secret") || !strings.Contains(redacted, "state=[redacted]") {
+		t.Fatalf("redacted URL = %q", redacted)
+	}
+	malformed := redactURLForOutput("https://example.com/%zz?token=secret&flag")
+	if strings.Contains(malformed, "secret") || !strings.Contains(malformed, "token=[redacted]") {
+		t.Fatalf("malformed redacted URL = %q", malformed)
 	}
 }
 
