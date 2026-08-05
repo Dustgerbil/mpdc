@@ -30,10 +30,10 @@ import (
 
 const (
 	connectionTimeout = 5 * time.Second
-	jsonSchemaVersion = 1
+	jsonSchemaVersion = 2
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 
 type Finding struct {
 	Code     string `json:"code"`
@@ -217,12 +217,14 @@ type Result struct {
 	DNS         DNSDetails       `json:"dns"`
 	Findings    []Finding        `json:"findings,omitempty"`
 	Mail        *MailSecurity    `json:"mail,omitempty"`
+	HTTP        *HTTPInspection  `json:"http,omitempty"`
 }
 
 type options struct {
 	scanCiphers bool
 	mail        bool
 	dnsServer   string
+	http        HTTPScanOptions
 }
 
 func main() {
@@ -232,6 +234,14 @@ func main() {
 	scanCiphers := flag.Bool("scan-ciphers", false, "Actively enumerate accepted TLS 1.0-1.2 cipher suites (slow)")
 	mail := flag.Bool("mail", false, "Inspect MX, SPF, DMARC, MTA-STS, and TLS reporting")
 	dnsServer := flag.String("dns-server", "", "DNS resolver for CAA, TLSA, HTTPS, TTL, and DNSSEC AD checks (default: system resolver)")
+	httpEnabled := flag.Bool("http", false, "Enable bounded HTTP security inspection")
+	var httpPaths httpPathList
+	flag.Var(&httpPaths, "http-path", "HTTPS path to inspect (repeatable; default /)")
+	httpTimeout := flag.Duration("http-timeout", 10*time.Second, "Timeout for each HTTP request")
+	httpMaxRedirects := flag.Int("http-max-redirects", 10, "Maximum HTTP redirect hops")
+	httpMaxBody := flag.Int64("http-max-body", 1<<20, "Maximum decoded response bytes to read and discard")
+	var httpAllowedHosts httpHostnameList
+	flag.Var(&httpAllowedHosts, "http-allow-redirect-host", "Allow redirects to this hostname (repeatable)")
 	versionOutput := flag.Bool("version", false, "Print version information and exit")
 	flag.Parse()
 
@@ -241,7 +251,11 @@ func main() {
 	}
 
 	if *jsonOutput && *markdownOutput {
-		fmt.Fprintln(os.Stderr, "Error: --json and --markdown flags are mutually exclusive.")
+		fmt.Fprintln(os.Stderr, "Error: -json and -markdown flags are mutually exclusive.")
+		os.Exit(1)
+	}
+	if err := validateHTTPFlagValues(*httpTimeout, *httpMaxRedirects, *httpMaxBody, httpPaths); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -288,7 +302,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	opts := options{scanCiphers: *scanCiphers, mail: *mail, dnsServer: *dnsServer}
+	paths := []string(httpPaths)
+	if len(paths) == 0 {
+		paths = []string{"/"}
+	}
+	opts := options{
+		scanCiphers: *scanCiphers,
+		mail:        *mail,
+		dnsServer:   *dnsServer,
+		http: HTTPScanOptions{
+			Enabled:              *httpEnabled,
+			Paths:                paths,
+			Timeout:              *httpTimeout,
+			MaxRedirects:         *httpMaxRedirects,
+			MaxBodyBytes:         *httpMaxBody,
+			AllowedRedirectHosts: []string(httpAllowedHosts),
+		},
+	}
 	results := make([]Result, 0, len(hostnames))
 	for _, host := range hostnames {
 		results = append(results, inspectHost(normalizeHostname(host), opts))
@@ -344,6 +374,7 @@ func inspectHost(host string, opts options) Result {
 		if opts.mail {
 			result.Mail = inspectMailSecurity(host)
 		}
+		addHTTPInspection(&result, opts.http)
 		return result
 	}
 
@@ -388,6 +419,7 @@ func inspectHost(host string, opts options) Result {
 	if opts.mail {
 		result.Mail = inspectMailSecurity(host)
 	}
+	addHTTPInspection(&result, opts.http)
 	return result
 }
 
@@ -1915,6 +1947,24 @@ func printResult(result Result) {
 		fmt.Printf("    TLS-RPT:     %s\n", valueOrDash(strings.Join(result.Mail.TLSReporting, " | ")))
 		for _, err := range result.Mail.Errors {
 			fmt.Printf("    Note:        %s\n", err)
+		}
+	}
+
+	if result.HTTP != nil {
+		fmt.Println("\n  HTTP security")
+		cleartext := result.HTTP.CleartextProbe
+		fmt.Printf("    Cleartext probe: %s -> %s (status %d)\n",
+			cleartext.RequestedURL, valueOrDash(cleartext.FinalURL), cleartext.StatusCode)
+		for _, page := range result.HTTP.Pages {
+			fmt.Printf("    HTTPS page:     %s -> %s (status %d, %s, remote %s, bytes %d, truncated=%v)\n",
+				page.RequestedURL, valueOrDash(page.FinalURL), page.StatusCode,
+				valueOrDash(page.HTTPProtocol), valueOrDash(page.RemoteIP), page.BytesRead, page.BodyTruncated)
+		}
+		securityTXT := result.HTTP.SecurityTXT
+		fmt.Printf("    security.txt:   %s (present=%v, status=%d, contacts=%d)\n",
+			securityTXT.RequestedURL, securityTXT.Present, securityTXT.StatusCode, len(securityTXT.Contacts))
+		for _, err := range result.HTTP.Errors {
+			fmt.Printf("    HTTP note:      %s\n", err)
 		}
 	}
 

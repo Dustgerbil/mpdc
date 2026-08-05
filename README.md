@@ -1,7 +1,8 @@
 # mpdc
 
 `mpdc` is a small command-line tool for inspecting the DNS and TLS configuration
-of one or more hostnames.
+of one or more hostnames. An opt-in HTTP mode adds bounded, passive inspection of
+redirects, response headers, cookie attributes, and `security.txt`.
 
 For each hostname, it:
 
@@ -15,7 +16,9 @@ For each hostname, it:
 - reports the negotiated cipher suite, key-exchange group, ALPN, OCSP staple,
   Certificate Transparency SCT count, and certificate chains;
 - displays certificate fingerprints, serial numbers, key strength, signature
-  algorithm, usages, and revocation endpoints; and
+  algorithm, usages, and revocation endpoints;
+- optionally records bounded HTTP redirects, security headers, redacted cookie
+  attributes, and RFC 9116 `security.txt`; and
 - emits stable, severity-labelled findings for automation.
 
 The tool uses only the Go standard library.
@@ -56,6 +59,12 @@ Options must appear before the first hostname.
 | `-dns-server <address>` | Use this resolver for advanced DNS queries. Port 53 is assumed when omitted. |
 | `-scan-ciphers` | Enumerate accepted TLS 1.0–1.2 cipher suites. This performs many extra connections. |
 | `-mail` | Inspect MX, SPF, DMARC, MTA-STS, and SMTP TLS reporting DNS records. |
+| `-http` | Enable bounded HTTP security inspection. |
+| `-http-path <path>` | Add an HTTPS path to inspect; repeatable, maximum 10. |
+| `-http-timeout <duration>` | Set each HTTP request timeout; default `10s`. |
+| `-http-max-redirects <n>` | Set the maximum redirect hops; default `10`. |
+| `-http-max-body <bytes>` | Set the decoded page-body read/discard limit; default 1 MiB. |
+| `-http-allow-redirect-host <hostname>` | Allow redirects to a named hostname; repeatable. |
 | `-version` | Print the `mpdc` version and exit. |
 
 `-json` and `-markdown` are mutually exclusive.
@@ -79,7 +88,9 @@ mpdc -json example.com
 ```
 
 JSON output remains an array with one object per requested hostname. Every
-object includes `"schema_version": 1`. Consumers should check this value before
+object includes `"schema_version": 2`. Schema 2 preserves all schema-1 fields
+and meanings and adds an optional `http` object. The object is omitted when
+`-http` is not selected. Consumers should check the schema value before
 processing a result and reject schema versions they do not support.
 
 ### Print the version
@@ -88,7 +99,7 @@ processing a result and reject schema versions they do not support.
 mpdc -version
 ```
 
-This prints the program name and semantic version, for example `mpdc 0.1.0`.
+This prints the program name and semantic version, for example `mpdc 0.2.0`.
 Release builds can override the source version with
 `-ldflags "-X main.version=<version>"`.
 
@@ -157,6 +168,15 @@ Hostname: example.com
 DNS or HTTPS failures are reported in the result for the affected hostname, so
 other hostnames can still be inspected.
 
+With `-http`, plain text also includes a bounded summary such as:
+
+```text
+  HTTP security
+    Cleartext probe: http://example.com/ -> https://example.com/ (status 200)
+    HTTPS page:     https://example.com/ -> https://example.com/ (status 200, HTTP/2.0, remote 203.0.113.10, bytes 1256, truncated=false)
+    security.txt:   https://example.com/.well-known/security.txt (present=true, status=200, contacts=1)
+```
+
 ## Findings
 
 Findings use stable codes and one of three severities: `critical`, `warning`,
@@ -217,6 +237,93 @@ invalid because the CAA policy might have changed since issuance.
   status is not parsed.
 - `-mail` discovers the MTA-STS DNS record but does not download its HTTPS
   policy file.
+
+## Optional HTTP security inspection
+
+HTTP inspection is disabled by default, so a normal invocation retains the
+DNS/TLS-only request behaviour. Enable it with `-http`:
+
+```sh
+mpdc -http example.com
+mpdc -http -json example.com
+mpdc -http -http-path / -http-path /login \
+  -http-allow-redirect-host www.example.com -json example.com
+```
+
+For each hostname, HTTP mode sends bounded `GET` requests to:
+
+- `http://hostname/` to observe the cleartext-to-HTTPS redirect chain;
+- each explicitly configured path on `https://hostname` (default `/`); and
+- `https://hostname/.well-known/security.txt`, with `/security.txt` checked only
+  when the RFC 9116 location is absent.
+
+Each redirect hop is recorded and validated before the next connection. Only
+HTTP and HTTPS on ports 80 and 443 are permitted. Redirects are followed only
+on the original hostname or a hostname explicitly listed with
+`-http-allow-redirect-host`. Every destination is resolved before connection;
+loopback, private, link-local, multicast, unspecified, documentation,
+carrier-grade NAT, reserved, and metadata-style addresses are blocked. If any
+resolved address is blocked, the destination is not contacted. Internationalized
+hostnames must be supplied in their ASCII punycode form.
+
+The scanner records status, protocol, remote address, content metadata, bounded
+byte counts, redirects, selected browser-security headers, redacted cookie
+attributes, and parsed `security.txt` fields. Cookie values, raw `Set-Cookie`
+headers, response bodies, page text, and raw `security.txt` content are never
+included in output. Bodies are read only to a configured decoded-byte limit and
+discarded.
+
+HTTP mode does not crawl, discover subdomains or paths, execute JavaScript,
+fetch page resources, authenticate, submit forms, replay cookies, fuzz, exploit,
+or test CORS with an `Origin` header. It is a deterministic passive inspection,
+not a vulnerability scanner, browser, or overall risk score.
+
+### HTTP options and bounds
+
+| Option | Description |
+| --- | --- |
+| `-http` | Enable HTTP security inspection. |
+| `-http-path <path>` | Repeatable HTTPS path; defaults to `/`, requires an absolute path, maximum 10. |
+| `-http-timeout <duration>` | Timeout for each request; default `10s`. |
+| `-http-max-redirects <n>` | Maximum followed redirect hops; default `10`, maximum `50`. |
+| `-http-max-body <bytes>` | Maximum decoded page bytes read and discarded; default 1 MiB, maximum 64 MiB. |
+| `-http-allow-redirect-host <hostname>` | Repeatable hostname explicitly allowed as a redirect target. |
+
+The `security.txt` body is always capped at the smaller of `-http-max-body` and
+64 KiB. Response headers are capped at 128 KiB. No cookie jar is used. With one
+default page and no redirects, HTTP mode makes three requests when the
+well-known `security.txt` exists, or four when it is absent and the legacy
+location is checked. Each configured path adds one initial request; followed
+redirects add one request per hop up to the configured limit.
+
+HTTP findings use the same `critical`, `warning`, and `info` severities as the
+DNS/TLS findings and are aggregated into the top-level `findings` array. Stable
+HTTP codes include:
+
+- transport: `HTTP_NO_HTTPS_REDIRECT`, `HTTP_REDIRECT_TO_INSECURE`,
+  `HTTP_REDIRECT_LOOP`, `HTTP_REDIRECT_LIMIT_REACHED`,
+  `HTTP_REDIRECT_OUT_OF_SCOPE`, `HTTP_REDIRECT_UNSUPPORTED_SCHEME`, and
+  `HTTP_TARGET_ADDRESS_BLOCKED`;
+- HSTS: `HSTS_MISSING`, `HSTS_INVALID`, `HSTS_DISABLED`, and
+  `HSTS_SHORT_MAX_AGE`;
+- content policy and framing: `CSP_MISSING`, `CSP_NOT_ENFORCED`, `CSP_INVALID`,
+  `CSP_UNSAFE_EVAL`, `CSP_UNSAFE_INLINE_SCRIPT`,
+  `CSP_WILDCARD_SCRIPT_SOURCE`, `CLICKJACKING_PROTECTION_MISSING`, and
+  `X_FRAME_OPTIONS_INVALID`;
+- other headers: `NOSNIFF_MISSING`, `REFERRER_POLICY_MISSING`,
+  `REFERRER_POLICY_UNSAFE_URL`, `PERMISSIONS_POLICY_MISSING`,
+  `PERMISSIONS_POLICY_SENSITIVE_WILDCARD`, and `SERVER_VERSION_DISCLOSURE`;
+- cookies: `COOKIE_SECURE_MISSING`, `COOKIE_HTTPONLY_MISSING`,
+  `COOKIE_SAMESITE_MISSING`, `COOKIE_SAMESITE_NONE_WITHOUT_SECURE`, and
+  `COOKIE_PREFIX_INVALID`; and
+- RFC 9116: `SECURITY_TXT_MISSING`, `SECURITY_TXT_INVALID`,
+  `SECURITY_TXT_EXPIRED`, `SECURITY_TXT_INSECURE_REDIRECT`, and
+  `SECURITY_TXT_LEGACY_LOCATION`.
+
+Absence of context-dependent controls such as Referrer Policy, Permissions
+Policy, `HttpOnly`, and `SameSite` is informational. Passive CORS headers are
+recorded without drawing a security conclusion because the request contains no
+`Origin` header.
 
 ## License
 
