@@ -65,6 +65,7 @@ Options must appear before the first hostname.
 | `-http-max-redirects <n>` | Set the maximum redirect hops; default `10`. |
 | `-http-max-body <bytes>` | Set the decoded page-body read/discard limit; default 1 MiB. |
 | `-http-allow-redirect-host <hostname>` | Allow redirects to a named hostname; repeatable. |
+| `-schema-capabilities` | Print result-schema capabilities as JSON and exit. |
 | `-version` | Print the `mpdc` version and exit. |
 
 `-json` and `-markdown` are mutually exclusive.
@@ -92,6 +93,29 @@ object includes `"schema_version": 2`. Schema 2 preserves all schema-1 fields
 and meanings and adds an optional `http` object. The object is omitted when
 `-http` is not selected. Consumers should check the schema value before
 processing a result and reject schema versions they do not support.
+
+### Print schema capabilities
+
+```sh
+mpdc -schema-capabilities
+```
+
+This performs no inspection and prints the current result schema version and
+the stable capability identifiers implemented by the binary. Each capability
+states whether it is enabled by default and, for opt-in capabilities, which
+flag enables it:
+
+```json
+{
+  "schema_version": 2,
+  "capabilities": [
+    { "name": "dns", "enabled_by_default": true },
+    { "name": "tls", "enabled_by_default": true },
+    { "name": "mail", "enabled_by_default": false, "flag": "-mail" },
+    { "name": "http", "enabled_by_default": false, "flag": "-http" }
+  ]
+}
+```
 
 ### Print the version
 

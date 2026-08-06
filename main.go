@@ -18,6 +18,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -220,6 +221,17 @@ type Result struct {
 	HTTP        *HTTPInspection  `json:"http,omitempty"`
 }
 
+type SchemaCapability struct {
+	Name             string `json:"name"`
+	EnabledByDefault bool   `json:"enabled_by_default"`
+	Flag             string `json:"flag,omitempty"`
+}
+
+type SchemaCapabilities struct {
+	SchemaVersion int                `json:"schema_version"`
+	Capabilities  []SchemaCapability `json:"capabilities"`
+}
+
 type options struct {
 	scanCiphers bool
 	mail        bool
@@ -243,10 +255,18 @@ func main() {
 	var httpAllowedHosts httpHostnameList
 	flag.Var(&httpAllowedHosts, "http-allow-redirect-host", "Allow redirects to this hostname (repeatable)")
 	versionOutput := flag.Bool("version", false, "Print version information and exit")
+	schemaCapabilitiesOutput := flag.Bool("schema-capabilities", false, "Print JSON schema capabilities and exit")
 	flag.Parse()
 
 	if *versionOutput {
 		fmt.Printf("mpdc %s\n", version)
+		return
+	}
+	if *schemaCapabilitiesOutput {
+		if err := writeSchemaCapabilities(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding schema capabilities: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -338,6 +358,21 @@ func main() {
 			printResult(result)
 		}
 	}
+}
+
+func writeSchemaCapabilities(w io.Writer) error {
+	capabilities := SchemaCapabilities{
+		SchemaVersion: jsonSchemaVersion,
+		Capabilities: []SchemaCapability{
+			{Name: "dns", EnabledByDefault: true},
+			{Name: "tls", EnabledByDefault: true},
+			{Name: "mail", Flag: "-mail"},
+			{Name: "http", Flag: "-http"},
+		},
+	}
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(capabilities)
 }
 
 func normalizeHostname(host string) string {
