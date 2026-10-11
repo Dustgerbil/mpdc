@@ -98,7 +98,7 @@ func TestHTTPRedirectToHTTPSAndNoCookieReplay(t *testing.T) {
 
 	dialer := &routeDialer{httpAddress: httpServer.Listener.Addr().String(), httpsAddress: httpsServer.Listener.Addr().String()}
 	scanner := testScanner(defaultHTTPOptions(), dialer)
-	page, _ := scanner.fetchPage("http://example.com/", "example.com", map[string]bool{"example.com": true}, 1024, false)
+	page, _ := scanner.fetchPage(context.Background(), "http://example.com/", "example.com", map[string]bool{"example.com": true}, 1024, false)
 	if page.FinalURL != "https://example.com/" || len(page.RedirectChain) != 1 || !page.RedirectChain[0].Followed {
 		t.Fatalf("unexpected redirect result: %+v", page)
 	}
@@ -123,7 +123,7 @@ func TestCleartextWithoutRedirect(t *testing.T) {
 	defer server.Close()
 	dialer := &routeDialer{httpAddress: server.Listener.Addr().String()}
 	scanner := testScanner(defaultHTTPOptions(), dialer)
-	page, _ := scanner.fetchPage("http://example.com/", "example.com", map[string]bool{"example.com": true}, 1024, false)
+	page, _ := scanner.fetchPage(context.Background(), "http://example.com/", "example.com", map[string]bool{"example.com": true}, 1024, false)
 	findings := evaluateCleartextRedirect(page)
 	assertFindingCode(t, findings, "HTTP_NO_HTTPS_REDIRECT")
 }
@@ -148,7 +148,7 @@ func TestRedirectStops(t *testing.T) {
 			defer server.Close()
 			dialer := &routeDialer{httpsAddress: server.Listener.Addr().String()}
 			scanner := testScanner(defaultHTTPOptions(), dialer)
-			page, _ := scanner.fetchPage("https://example.com/", "example.com", map[string]bool{"example.com": true}, 1024, false)
+			page, _ := scanner.fetchPage(context.Background(), "https://example.com/", "example.com", map[string]bool{"example.com": true}, 1024, false)
 			assertFindingCode(t, page.Findings, test.code)
 			if got := page.RedirectChain[0].StopReason; got != test.stopReason || page.RedirectChain[0].Followed {
 				t.Fatalf("redirect hop = %+v", page.RedirectChain[0])
@@ -168,7 +168,7 @@ func TestAllowedRedirectHostIsFollowed(t *testing.T) {
 	defer server.Close()
 	dialer := &routeDialer{httpsAddress: server.Listener.Addr().String()}
 	scanner := testScanner(defaultHTTPOptions(), dialer)
-	page, _ := scanner.fetchPage("https://example.com/", "example.com", map[string]bool{
+	page, _ := scanner.fetchPage(context.Background(), "https://example.com/", "example.com", map[string]bool{
 		"example.com": true, "allowed.example": true,
 	}, 1024, false)
 	if page.FinalURL != "https://allowed.example/final" || page.StatusCode != http.StatusNoContent || !page.RedirectChain[0].Followed {
@@ -187,7 +187,7 @@ func TestPrivateRedirectTargetIsBlockedBeforeDial(t *testing.T) {
 		"example.com":     {{IP: net.ParseIP("8.8.8.8")}},
 		"allowed.example": {{IP: net.ParseIP("10.0.0.1")}},
 	}}
-	page, _ := scanner.fetchPage("https://example.com/", "example.com", map[string]bool{
+	page, _ := scanner.fetchPage(context.Background(), "https://example.com/", "example.com", map[string]bool{
 		"example.com": true, "allowed.example": true,
 	}, 1024, false)
 	assertFindingCode(t, page.Findings, "HTTP_TARGET_ADDRESS_BLOCKED")
@@ -207,7 +207,7 @@ func TestRedirectLoopAndLimit(t *testing.T) {
 	defer loopServer.Close()
 	dialer := &routeDialer{httpsAddress: loopServer.Listener.Addr().String()}
 	scanner := testScanner(defaultHTTPOptions(), dialer)
-	page, _ := scanner.fetchPage("https://example.com/a", "example.com", map[string]bool{"example.com": true}, 1024, false)
+	page, _ := scanner.fetchPage(context.Background(), "https://example.com/a", "example.com", map[string]bool{"example.com": true}, 1024, false)
 	assertFindingCode(t, page.Findings, "HTTP_REDIRECT_LOOP")
 
 	options := defaultHTTPOptions()
@@ -222,7 +222,7 @@ func TestRedirectLoopAndLimit(t *testing.T) {
 	defer limitServer.Close()
 	limitDialer := &routeDialer{httpsAddress: limitServer.Listener.Addr().String()}
 	scanner = testScanner(options, limitDialer)
-	page, _ = scanner.fetchPage("https://example.com/a", "example.com", map[string]bool{"example.com": true}, 1024, false)
+	page, _ = scanner.fetchPage(context.Background(), "https://example.com/a", "example.com", map[string]bool{"example.com": true}, 1024, false)
 	assertFindingCode(t, page.Findings, "HTTP_REDIRECT_LIMIT_REACHED")
 }
 
@@ -232,7 +232,7 @@ func TestBlockedAddressNeverDialed(t *testing.T) {
 	scanner.resolver = staticResolver{addresses: map[string][]net.IPAddr{
 		"example.com": {{IP: net.ParseIP("127.0.0.1")}, {IP: net.ParseIP("8.8.8.8")}},
 	}}
-	page, _ := scanner.fetchPage("https://example.com/", "example.com", map[string]bool{"example.com": true}, 1024, false)
+	page, _ := scanner.fetchPage(context.Background(), "https://example.com/", "example.com", map[string]bool{"example.com": true}, 1024, false)
 	assertFindingCode(t, page.Findings, "HTTP_TARGET_ADDRESS_BLOCKED")
 	if dialer.calls.Load() != 0 {
 		t.Fatalf("dialer was called %d times", dialer.calls.Load())
@@ -299,7 +299,7 @@ func TestBodyHeaderLimitsAndTimeout(t *testing.T) {
 		}))
 		defer server.Close()
 		dialer := &routeDialer{httpsAddress: server.Listener.Addr().String()}
-		page, body := testScanner(defaultHTTPOptions(), dialer).fetchPage("https://example.com/", "example.com", map[string]bool{"example.com": true}, 16, false)
+		page, body := testScanner(defaultHTTPOptions(), dialer).fetchPage(context.Background(), "https://example.com/", "example.com", map[string]bool{"example.com": true}, 16, false)
 		if !page.BodyTruncated || page.BytesRead != 16 || len(body) != 16 {
 			t.Fatalf("body limit result = %+v, len=%d", page, len(body))
 		}
@@ -312,7 +312,7 @@ func TestBodyHeaderLimitsAndTimeout(t *testing.T) {
 		}))
 		defer server.Close()
 		dialer := &routeDialer{httpsAddress: server.Listener.Addr().String()}
-		page, _ := testScanner(defaultHTTPOptions(), dialer).fetchPage("https://example.com/", "example.com", map[string]bool{"example.com": true}, 16, false)
+		page, _ := testScanner(defaultHTTPOptions(), dialer).fetchPage(context.Background(), "https://example.com/", "example.com", map[string]bool{"example.com": true}, 16, false)
 		if page.Error == "" {
 			t.Fatal("expected oversized header error")
 		}
@@ -327,7 +327,7 @@ func TestBodyHeaderLimitsAndTimeout(t *testing.T) {
 		dialer := &routeDialer{httpsAddress: server.Listener.Addr().String()}
 		options := defaultHTTPOptions()
 		options.Timeout = 10 * time.Millisecond
-		page, _ := testScanner(options, dialer).fetchPage("https://example.com/", "example.com", map[string]bool{"example.com": true}, 16, false)
+		page, _ := testScanner(options, dialer).fetchPage(context.Background(), "https://example.com/", "example.com", map[string]bool{"example.com": true}, 16, false)
 		if page.Error == "" || !(strings.Contains(page.Error, "timeout") || strings.Contains(page.Error, "deadline exceeded")) {
 			t.Fatalf("timeout error = %q", page.Error)
 		}
@@ -356,7 +356,7 @@ func TestRedirectUserinfoIsRejectedAndRedacted(t *testing.T) {
 	}))
 	defer server.Close()
 	dialer := &routeDialer{httpsAddress: server.Listener.Addr().String()}
-	page, _ := testScanner(defaultHTTPOptions(), dialer).fetchPage(
+	page, _ := testScanner(defaultHTTPOptions(), dialer).fetchPage(context.Background(),
 		"https://example.com/", "example.com", map[string]bool{"example.com": true}, 16, false)
 	encoded, err := json.Marshal(page)
 	if err != nil {
@@ -378,7 +378,7 @@ func TestRedirectQueryValuesAreRedactedEverywhere(t *testing.T) {
 	}))
 	defer server.Close()
 	dialer := &routeDialer{httpsAddress: server.Listener.Addr().String()}
-	page, _ := testScanner(defaultHTTPOptions(), dialer).fetchPage(
+	page, _ := testScanner(defaultHTTPOptions(), dialer).fetchPage(context.Background(),
 		"https://example.com/start?initial=initial-secret", "example.com", map[string]bool{"example.com": true}, 16, false)
 	encoded, err := json.Marshal(page)
 	if err != nil {
@@ -399,7 +399,7 @@ func TestRedirectQueryValuesAreRedactedEverywhere(t *testing.T) {
 		t.Fatalf("error retained query value: %q", page.Error)
 	}
 
-	failedPage, _ := testScanner(defaultHTTPOptions(), &routeDialer{}).fetchPage(
+	failedPage, _ := testScanner(defaultHTTPOptions(), &routeDialer{}).fetchPage(context.Background(),
 		"https://example.com/fail?error_token=error-secret", "example.com", map[string]bool{"example.com": true}, 16, false)
 	failedJSON, err := json.Marshal(failedPage)
 	if err != nil {
@@ -445,11 +445,11 @@ func TestFailedInspectionDoesNotPoisonNext(t *testing.T) {
 	defer server.Close()
 	dialer := &routeDialer{httpAddress: server.Listener.Addr().String(), httpsAddress: server.Listener.Addr().String()}
 	scanner := testScanner(defaultHTTPOptions(), dialer)
-	failed := scanner.inspect("https://bad.example")
+	failed := scanner.inspect(context.Background(), "https://bad.example")
 	if len(failed.Errors) == 0 {
 		t.Fatal("expected invalid hostname error")
 	}
-	page, _ := scanner.fetchPage("https://example.com/", "example.com", map[string]bool{"example.com": true}, 16, false)
+	page, _ := scanner.fetchPage(context.Background(), "https://example.com/", "example.com", map[string]bool{"example.com": true}, 16, false)
 	if page.StatusCode != http.StatusNoContent {
 		t.Fatalf("subsequent status = %d, error = %s", page.StatusCode, page.Error)
 	}
@@ -475,4 +475,91 @@ func assertFindingCode(t *testing.T, findings []Finding, code string) {
 		}
 	}
 	t.Fatalf("finding %s missing from %+v", code, findings)
+}
+
+func TestRedirectCookieEvidence(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Cookie") != "" {
+			t.Error("cookie replayed")
+		}
+		if r.URL.Path == "/" {
+			w.Header().Set("Set-Cookie", "session=redirect-secret; HttpOnly")
+			http.Redirect(w, r, "/final?token=query-secret", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Set-Cookie", "final=final-secret; Secure; HttpOnly; SameSite=Strict")
+		w.Write([]byte("body-secret"))
+	}))
+	defer server.Close()
+	scanner := testScanner(defaultHTTPOptions(), &routeDialer{httpsAddress: server.Listener.Addr().String()})
+	page, _ := scanner.fetchPage(context.Background(), "https://example.com/", "example.com", map[string]bool{"example.com": true}, 1024, true)
+	assertFindingCode(t, page.Findings, "COOKIE_SECURE_MISSING")
+	if len(page.RedirectChain) != 1 || len(page.RedirectChain[0].Cookies) != 1 || page.RedirectChain[0].Cookies[0].Name != "session" {
+		t.Fatalf("hop evidence: %+v", page.RedirectChain)
+	}
+	if len(page.Cookies) != 1 || page.Cookies[0].Name != "final" {
+		t.Fatalf("final cookies changed meaning: %+v", page.Cookies)
+	}
+	encoded, _ := json.Marshal(page)
+	for _, secret := range []string{"redirect-secret", "final-secret", "query-secret", "body-secret"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Errorf("leaked %s", secret)
+		}
+	}
+}
+
+func TestStoppedRedirectCookieEvidence(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Set-Cookie", "session=secret")
+		http.Redirect(w, r, "https://elsewhere.example/", http.StatusFound)
+	}))
+	defer server.Close()
+	scanner := testScanner(defaultHTTPOptions(), &routeDialer{httpsAddress: server.Listener.Addr().String()})
+	page, _ := scanner.fetchPage(context.Background(), "https://example.com/", "example.com", map[string]bool{"example.com": true}, 1024, true)
+	assertFindingCode(t, page.Findings, "COOKIE_SECURE_MISSING")
+	if len(page.RedirectChain) != 1 || page.RedirectChain[0].Followed || len(page.RedirectChain[0].Cookies) != 1 {
+		t.Fatalf("%+v", page)
+	}
+}
+
+func TestHTTPScanBudgetAcrossRedirects(t *testing.T) {
+	var calls atomic.Int64
+	started := make(chan struct{})
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/slow", 302)
+			return
+		}
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	scanner := testScanner(defaultHTTPOptions(), &routeDialer{httpsAddress: server.Listener.Addr().String()})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan HTTPPageResult, 1)
+	go func() {
+		p, _ := scanner.fetchPage(ctx, "https://example.com/", "example.com", map[string]bool{"example.com": true}, 1024, true)
+		done <- p
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("second request not started")
+	}
+	cancel()
+	select {
+	case p := <-done:
+		if !strings.Contains(p.Error, "context canceled") || len(p.RedirectChain) != 1 {
+			t.Fatalf("%+v", p)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("parent cancellation did not stop HTTP")
+	}
+	scanner.inspect(ctx, "example.com")
+	if calls.Load() != 2 {
+		t.Fatalf("new requests after cancellation: %d", calls.Load())
+	}
 }

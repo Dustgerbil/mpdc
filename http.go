@@ -58,12 +58,13 @@ type HTTPPageResult struct {
 }
 
 type RedirectHop struct {
-	FromURL     string `json:"from_url"`
-	StatusCode  int    `json:"status_code"`
-	Location    string `json:"location"`
-	ResolvedURL string `json:"resolved_url,omitempty"`
-	Followed    bool   `json:"followed"`
-	StopReason  string `json:"stop_reason,omitempty"`
+	Cookies     []CookieObservation `json:"cookies,omitempty"`
+	FromURL     string              `json:"from_url"`
+	StatusCode  int                 `json:"status_code"`
+	Location    string              `json:"location"`
+	ResolvedURL string              `json:"resolved_url,omitempty"`
+	Followed    bool                `json:"followed"`
+	StopReason  string              `json:"stop_reason,omitempty"`
 }
 
 type SecurityHeaders struct {
@@ -248,17 +249,17 @@ func newHTTPScanner(options HTTPScanOptions) *httpScanner {
 	}
 }
 
-func addHTTPInspection(result *Result, options HTTPScanOptions) {
+func (scanner *hostScanner) addHTTPInspection(ctx context.Context, result *Result, options HTTPScanOptions) {
 	if !options.Enabled {
 		return
 	}
-	inspection := newHTTPScanner(options).inspect(result.Hostname)
+	inspection := scanner.newHTTP(options).inspect(ctx, result.Hostname)
 	result.HTTP = &inspection
 	result.Findings = append(result.Findings, inspection.Findings...)
 	result.Findings = deduplicateFindings(result.Findings)
 }
 
-func (scanner *httpScanner) inspect(host string) HTTPInspection {
+func (scanner *httpScanner) inspect(ctx context.Context, host string) HTTPInspection {
 	inspection := HTTPInspection{Enabled: true}
 	normalized, err := normalizeHTTPHostname(host)
 	if err != nil {
@@ -271,16 +272,16 @@ func (scanner *httpScanner) inspect(host string) HTTPInspection {
 	}
 
 	clearURL := "http://" + normalized + "/"
-	inspection.CleartextProbe, _ = scanner.fetchPage(clearURL, normalized, allowed, scanner.options.MaxBodyBytes, false)
+	inspection.CleartextProbe, _ = scanner.fetchPage(ctx, clearURL, normalized, allowed, scanner.options.MaxBodyBytes, false)
 	inspection.CleartextProbe.Findings = append(inspection.CleartextProbe.Findings,
 		evaluateCleartextRedirect(inspection.CleartextProbe)...)
 
 	for _, path := range scanner.options.Paths {
-		page, _ := scanner.fetchPage("https://"+normalized+path, normalized, allowed, scanner.options.MaxBodyBytes, true)
+		page, _ := scanner.fetchPage(ctx, "https://"+normalized+path, normalized, allowed, scanner.options.MaxBodyBytes, true)
 		inspection.Pages = append(inspection.Pages, page)
 	}
 
-	inspection.SecurityTXT = scanner.inspectSecurityTXT(normalized, allowed)
+	inspection.SecurityTXT = scanner.inspectSecurityTXT(ctx, normalized, allowed)
 	inspection.Findings = append(inspection.Findings, inspection.CleartextProbe.Findings...)
 	if inspection.CleartextProbe.Error != "" {
 		inspection.Errors = append(inspection.Errors, inspection.CleartextProbe.Error)

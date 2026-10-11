@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"mime"
 	"net/url"
@@ -10,9 +11,9 @@ import (
 	"unicode/utf8"
 )
 
-func (scanner *httpScanner) inspectSecurityTXT(host string, allowedHosts map[string]bool) SecurityTXTResult {
+func (scanner *httpScanner) inspectSecurityTXT(ctx context.Context, host string, allowedHosts map[string]bool) SecurityTXTResult {
 	wellKnownURL := "https://" + host + "/.well-known/security.txt"
-	page, body := scanner.fetchPage(wellKnownURL, host, allowedHosts,
+	page, body := scanner.fetchPage(ctx, wellKnownURL, host, allowedHosts,
 		int64Limit(scanner.options.MaxBodyBytes, maxSecurityTXTBodyBytes), false)
 	result := parseSecurityTXTPage(page, body, scanner.now())
 	if result.Present {
@@ -27,7 +28,7 @@ func (scanner *httpScanner) inspectSecurityTXT(host string, allowedHosts map[str
 	}
 
 	legacyURL := "https://" + host + "/security.txt"
-	legacyPage, legacyBody := scanner.fetchPage(legacyURL, host, allowedHosts,
+	legacyPage, legacyBody := scanner.fetchPage(ctx, legacyURL, host, allowedHosts,
 		int64Limit(scanner.options.MaxBodyBytes, maxSecurityTXTBodyBytes), false)
 	legacy := parseSecurityTXTPage(legacyPage, legacyBody, scanner.now())
 	if legacy.Present {

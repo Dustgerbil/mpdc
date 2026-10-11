@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -113,7 +114,7 @@ func TestSecurityTXTMissingAndLegacy(t *testing.T) {
 	defer server.Close()
 	dialer := &routeDialer{httpsAddress: server.Listener.Addr().String()}
 	scanner := testScanner(defaultHTTPOptions(), dialer)
-	legacy := scanner.inspectSecurityTXT("example.com", map[string]bool{"example.com": true})
+	legacy := scanner.inspectSecurityTXT(context.Background(), "example.com", map[string]bool{"example.com": true})
 	if !legacy.Present || legacy.RequestedURL != "https://example.com/security.txt" {
 		t.Fatalf("legacy result = %+v", legacy)
 	}

@@ -1,0 +1,577 @@
+[
+  {
+    "schema_version": 2,
+    "hostname": "fixture",
+    "cname": "fixture",
+    "ips": [
+      "fixture"
+    ],
+    "reachable": true,
+    "tls_version": "fixture",
+    "subject": "fixture",
+    "alt_names": [
+      "fixture"
+    ],
+    "issuer": "fixture",
+    "issued": "2030-01-02T03:04:05Z",
+    "expiry": "2030-01-02T03:04:05Z",
+    "error": "fixture",
+    "a_records": [
+      "fixture"
+    ],
+    "aaaa_records": [
+      "fixture"
+    ],
+    "endpoints": [
+      {
+        "ip": "fixture",
+        "address_family": "fixture",
+        "ip_classification": "fixture",
+        "tcp_reachable": true,
+        "tls_handshake": true,
+        "certificate_valid": true,
+        "chain_trusted": true,
+        "hostname_match": true,
+        "tls_version": "fixture",
+        "cipher_suite": "fixture",
+        "key_exchange": "fixture",
+        "alpn": "fixture",
+        "server_name": "fixture",
+        "supported_tls_versions": [
+          "fixture"
+        ],
+        "supported_cipher_suites": {
+          "fixture": [
+            "fixture"
+          ]
+        },
+        "certificate": {
+          "subject": "fixture",
+          "issuer": "fixture",
+          "alt_names": [
+            "fixture"
+          ],
+          "wildcard_alt_names": [
+            "fixture"
+          ],
+          "issued": "2030-01-02T03:04:05Z",
+          "expiry": "2030-01-02T03:04:05Z",
+          "days_remaining": 7,
+          "time_status": "fixture",
+          "serial_number": "fixture",
+          "fingerprint_sha256": "fixture",
+          "public_key_algorithm": "fixture",
+          "public_key_bits": 7,
+          "public_key_curve": "fixture",
+          "signature_algorithm": "fixture",
+          "key_usage": [
+            "fixture"
+          ],
+          "extended_key_usage": [
+            "fixture"
+          ],
+          "is_ca": true,
+          "ocsp_servers": [
+            "fixture"
+          ],
+          "crl_distribution_points": [
+            "fixture"
+          ],
+          "issuing_certificate_urls": [
+            "fixture"
+          ],
+          "tls_features": [
+            7
+          ],
+          "must_staple": true
+        },
+        "peer_chain": [
+          {
+            "subject": "fixture",
+            "issuer": "fixture",
+            "alt_names": [
+              "fixture"
+            ],
+            "wildcard_alt_names": [
+              "fixture"
+            ],
+            "issued": "2030-01-02T03:04:05Z",
+            "expiry": "2030-01-02T03:04:05Z",
+            "days_remaining": 7,
+            "time_status": "fixture",
+            "serial_number": "fixture",
+            "fingerprint_sha256": "fixture",
+            "public_key_algorithm": "fixture",
+            "public_key_bits": 7,
+            "public_key_curve": "fixture",
+            "signature_algorithm": "fixture",
+            "key_usage": [
+              "fixture"
+            ],
+            "extended_key_usage": [
+              "fixture"
+            ],
+            "is_ca": true,
+            "ocsp_servers": [
+              "fixture"
+            ],
+            "crl_distribution_points": [
+              "fixture"
+            ],
+            "issuing_certificate_urls": [
+              "fixture"
+            ],
+            "tls_features": [
+              7
+            ],
+            "must_staple": true
+          }
+        ],
+        "verified_chain": [
+          {
+            "subject": "fixture",
+            "issuer": "fixture",
+            "alt_names": [
+              "fixture"
+            ],
+            "wildcard_alt_names": [
+              "fixture"
+            ],
+            "issued": "2030-01-02T03:04:05Z",
+            "expiry": "2030-01-02T03:04:05Z",
+            "days_remaining": 7,
+            "time_status": "fixture",
+            "serial_number": "fixture",
+            "fingerprint_sha256": "fixture",
+            "public_key_algorithm": "fixture",
+            "public_key_bits": 7,
+            "public_key_curve": "fixture",
+            "signature_algorithm": "fixture",
+            "key_usage": [
+              "fixture"
+            ],
+            "extended_key_usage": [
+              "fixture"
+            ],
+            "is_ca": true,
+            "ocsp_servers": [
+              "fixture"
+            ],
+            "crl_distribution_points": [
+              "fixture"
+            ],
+            "issuing_certificate_urls": [
+              "fixture"
+            ],
+            "tls_features": [
+              7
+            ],
+            "must_staple": true
+          }
+        ],
+        "ocsp_stapled": true,
+        "ocsp_response_bytes": 7,
+        "sct_count": 7,
+        "verification_error": "fixture",
+        "error": "fixture",
+        "findings": [
+          {
+            "code": "fixture",
+            "severity": "fixture",
+            "message": "fixture"
+          }
+        ]
+      }
+    ],
+    "dns": {
+      "resolver": "fixture",
+      "dnssec_status": "fixture",
+      "authenticated_data": true,
+      "zone": "fixture",
+      "cname_chain": [
+        "fixture"
+      ],
+      "record_ttls": [
+        {
+          "type": "fixture",
+          "name": "fixture",
+          "value": "fixture",
+          "ttl": 7
+        }
+      ],
+      "nameservers": [
+        {
+          "name": "fixture",
+          "ttl": 7,
+          "addresses": [
+            "fixture"
+          ]
+        }
+      ],
+      "caa": [
+        {
+          "name": "fixture",
+          "ttl": 7,
+          "flags": 7,
+          "tag": "fixture",
+          "value": "fixture",
+          "dnssec_validated": true
+        }
+      ],
+      "tlsa": [
+        {
+          "name": "fixture",
+          "ttl": 7,
+          "certificate_usage": 7,
+          "selector": 7,
+          "matching_type": 7,
+          "association_data": "fixture",
+          "matches_presented_chain": true,
+          "dnssec_validated": true
+        }
+      ],
+      "https_records": [
+        {
+          "name": "fixture",
+          "ttl": 7,
+          "priority": 7,
+          "target_name": "fixture",
+          "parameters": {
+            "fixture": "fixture"
+          },
+          "dnssec_validated": true
+        }
+      ],
+      "ds": [
+        {
+          "name": "fixture",
+          "ttl": 7,
+          "key_tag": 7,
+          "algorithm": 7,
+          "algorithm_name": "fixture",
+          "digest_type": 7,
+          "digest": "fixture"
+        }
+      ],
+      "dnskey": [
+        {
+          "name": "fixture",
+          "ttl": 7,
+          "flags": 7,
+          "protocol": 7,
+          "algorithm": 7,
+          "algorithm_name": "fixture",
+          "key_tag": 7
+        }
+      ],
+      "rrsig": [
+        {
+          "name": "fixture",
+          "ttl": 7,
+          "type_covered": "fixture",
+          "algorithm": 7,
+          "algorithm_name": "fixture",
+          "key_tag": 7,
+          "signer_name": "fixture",
+          "inception": "2030-01-02T03:04:05Z",
+          "expiration": "2030-01-02T03:04:05Z"
+        }
+      ],
+      "errors": [
+        "fixture"
+      ]
+    },
+    "findings": [
+      {
+        "code": "fixture",
+        "severity": "fixture",
+        "message": "fixture"
+      }
+    ],
+    "mail": {
+      "mx": [
+        "fixture"
+      ],
+      "spf": [
+        "fixture"
+      ],
+      "dmarc": [
+        "fixture"
+      ],
+      "mta_sts_record": [
+        "fixture"
+      ],
+      "tls_reporting": [
+        "fixture"
+      ],
+      "errors": [
+        "fixture"
+      ]
+    },
+    "http": {
+      "enabled": true,
+      "cleartext_probe": {
+        "requested_url": "fixture",
+        "final_url": "fixture",
+        "status_code": 7,
+        "http_protocol": "fixture",
+        "remote_ip": "fixture",
+        "content_type": "fixture",
+        "content_length": 7,
+        "bytes_read": 7,
+        "body_truncated": true,
+        "redirect_chain": [
+          {
+            "from_url": "fixture",
+            "status_code": 7,
+            "location": "fixture",
+            "resolved_url": "fixture",
+            "followed": true,
+            "stop_reason": "fixture"
+          }
+        ],
+        "security_headers": {
+          "strict_transport_security": [
+            "fixture"
+          ],
+          "hsts_max_age": 7,
+          "hsts_include_subdomains": true,
+          "hsts_preload": true,
+          "content_security_policy": [
+            "fixture"
+          ],
+          "content_security_policy_report_only": [
+            "fixture"
+          ],
+          "x_frame_options": [
+            "fixture"
+          ],
+          "x_content_type_options": [
+            "fixture"
+          ],
+          "referrer_policy": [
+            "fixture"
+          ],
+          "permissions_policy": [
+            "fixture"
+          ],
+          "sensitive_permissions": [
+            {
+              "feature": "fixture",
+              "allowlist": [
+                "fixture"
+              ],
+              "valid": true
+            }
+          ],
+          "cross_origin_opener_policy": [
+            "fixture"
+          ],
+          "cross_origin_embedder_policy": [
+            "fixture"
+          ],
+          "cross_origin_resource_policy": [
+            "fixture"
+          ],
+          "cache_control": [
+            "fixture"
+          ],
+          "pragma": [
+            "fixture"
+          ],
+          "server": [
+            "fixture"
+          ],
+          "x_powered_by": [
+            "fixture"
+          ],
+          "access_control_allow_origin": [
+            "fixture"
+          ],
+          "access_control_allow_credentials": [
+            "fixture"
+          ]
+        },
+        "cookies": [
+          {
+            "name": "fixture",
+            "secure": true,
+            "http_only": true,
+            "same_site": "fixture",
+            "path": "fixture",
+            "domain": "fixture",
+            "partitioned": true,
+            "host_prefix": true,
+            "secure_prefix": true,
+            "attribute_names": [
+              "fixture"
+            ]
+          }
+        ],
+        "findings": [
+          {
+            "code": "fixture",
+            "severity": "fixture",
+            "message": "fixture"
+          }
+        ],
+        "error": "fixture"
+      },
+      "pages": [
+        {
+          "requested_url": "fixture",
+          "final_url": "fixture",
+          "status_code": 7,
+          "http_protocol": "fixture",
+          "remote_ip": "fixture",
+          "content_type": "fixture",
+          "content_length": 7,
+          "bytes_read": 7,
+          "body_truncated": true,
+          "redirect_chain": [
+            {
+              "from_url": "fixture",
+              "status_code": 7,
+              "location": "fixture",
+              "resolved_url": "fixture",
+              "followed": true,
+              "stop_reason": "fixture"
+            }
+          ],
+          "security_headers": {
+            "strict_transport_security": [
+              "fixture"
+            ],
+            "hsts_max_age": 7,
+            "hsts_include_subdomains": true,
+            "hsts_preload": true,
+            "content_security_policy": [
+              "fixture"
+            ],
+            "content_security_policy_report_only": [
+              "fixture"
+            ],
+            "x_frame_options": [
+              "fixture"
+            ],
+            "x_content_type_options": [
+              "fixture"
+            ],
+            "referrer_policy": [
+              "fixture"
+            ],
+            "permissions_policy": [
+              "fixture"
+            ],
+            "sensitive_permissions": [
+              {
+                "feature": "fixture",
+                "allowlist": [
+                  "fixture"
+                ],
+                "valid": true
+              }
+            ],
+            "cross_origin_opener_policy": [
+              "fixture"
+            ],
+            "cross_origin_embedder_policy": [
+              "fixture"
+            ],
+            "cross_origin_resource_policy": [
+              "fixture"
+            ],
+            "cache_control": [
+              "fixture"
+            ],
+            "pragma": [
+              "fixture"
+            ],
+            "server": [
+              "fixture"
+            ],
+            "x_powered_by": [
+              "fixture"
+            ],
+            "access_control_allow_origin": [
+              "fixture"
+            ],
+            "access_control_allow_credentials": [
+              "fixture"
+            ]
+          },
+          "cookies": [
+            {
+              "name": "fixture",
+              "secure": true,
+              "http_only": true,
+              "same_site": "fixture",
+              "path": "fixture",
+              "domain": "fixture",
+              "partitioned": true,
+              "host_prefix": true,
+              "secure_prefix": true,
+              "attribute_names": [
+                "fixture"
+              ]
+            }
+          ],
+          "findings": [
+            {
+              "code": "fixture",
+              "severity": "fixture",
+              "message": "fixture"
+            }
+          ],
+          "error": "fixture"
+        }
+      ],
+      "security_txt": {
+        "requested_url": "fixture",
+        "final_url": "fixture",
+        "present": true,
+        "status_code": 7,
+        "content_type": "fixture",
+        "utf8_valid": true,
+        "contacts": [
+          "fixture"
+        ],
+        "expires": "2030-01-02T03:04:05Z",
+        "canonical": [
+          "fixture"
+        ],
+        "policy": [
+          "fixture"
+        ],
+        "encryption": [
+          "fixture"
+        ],
+        "preferred_languages": [
+          "fixture"
+        ],
+        "signed": true,
+        "unknown_field_names": [
+          "fixture"
+        ],
+        "findings": [
+          {
+            "code": "fixture",
+            "severity": "fixture",
+            "message": "fixture"
+          }
+        ],
+        "error": "fixture"
+      },
+      "findings": [
+        {
+          "code": "fixture",
+          "severity": "fixture",
+          "message": "fixture"
+        }
+      ],
+      "errors": [
+        "fixture"
+      ]
+    }
+  }
+]

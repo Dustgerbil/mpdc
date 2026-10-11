@@ -1,0 +1,46 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Formatting and whitespace
+        run: |
+          test -z "$(gofmt -l *.go)"
+          git diff --check
+      - name: Offline tests with race detection
+        run: go test -race -cover ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Build and preflight
+        run: |
+          go build -o "$RUNNER_TEMP/mpdc" .
+          "$RUNNER_TEMP/mpdc" -version
+          "$RUNNER_TEMP/mpdc" -schema-capabilities
+          "$RUNNER_TEMP/mpdc" -h
+      - name: DNS parser fuzz smoke tests
+        if: runner.os == 'Linux'
+        run: |
+          go test -run '^$' -fuzz '^FuzzDNSResponse$' -fuzztime=10s -parallel=2
+          go test -run '^$' -fuzz '^FuzzDNSName$' -fuzztime=10s -parallel=2
+      - name: Preserve tracked artifacts
+        run: git diff --exit-code

@@ -57,6 +57,8 @@ Options must appear before the first hostname.
 | `-markdown` | Output results as a Markdown table. |
 | `-file <path>` | Read hostnames from a text file. |
 | `-dns-server <address>` | Use this resolver for advanced DNS queries. Port 53 is assumed when omitted. |
+| `-scan-timeout <duration>` | Total network scan budget across all hostnames; default `5m`. |
+| `-concurrency <n>` | Maximum simultaneous endpoint inspections; default `8`, range `1`–`64`. |
 | `-scan-ciphers` | Enumerate accepted TLS 1.0–1.2 cipher suites. This performs many extra connections. |
 | `-mail` | Inspect MX, SPF, DMARC, MTA-STS, and SMTP TLS reporting DNS records. |
 | `-http` | Enable bounded HTTP security inspection. |
@@ -191,6 +193,51 @@ Hostname: example.com
 
 DNS or HTTPS failures are reported in the result for the affected hostname, so
 other hostnames can still be inspected.
+
+### Scan budget and partial results
+
+All hostnames in one invocation share a `-scan-timeout` budget (default five
+minutes), starting after input has been read. Hosts are processed in input order;
+up to `-concurrency` endpoints within the current host are inspected in parallel.
+Each worker runs that endpoint's TLS and optional cipher probes sequentially.
+DNS, TLS, mail and HTTP operations all inherit the remaining budget. System DNS
+lookups, advanced DNS exchanges (including TCP fallback), and TLS connections also
+have an individual five-second limit; HTTP requests retain `-http-timeout`.
+
+```sh
+mpdc -scan-timeout 2m -concurrency 4 -http -json example.com www.example.com
+mpdc -scan-timeout 15m -scan-ciphers example.com
+```
+
+On timeout, Ctrl-C, or SIGTERM, completed evidence is retained, unfinished hosts
+and endpoints have `"incomplete": true`, and affected hosts include the informational
+`SCAN_INCOMPLETE` finding. No new network work starts after cancellation. The
+output still contains an entry for every input hostname. An interrupted scan
+exits with status 1; ordinary completed scans retain status 0 even when they
+contain security findings or individual network errors. Preflight flags
+(`-version`, `-schema-capabilities`, and `-h`) perform no scanning.
+
+### Evidence availability
+
+Schema 2 retains all existing fields and adds optional evidence fields:
+
+- `dns.nameserver_status`: `available` or `unavailable`. A failed or malformed NS
+  lookup does not trigger `DNS_SINGLE_NAMESERVER`.
+- `endpoints[].tlsa_status`: `matched`, `mismatched`, or `unavailable` when
+  authenticated TLSA records are present. Each endpoint is compared against all
+  supported, well-formed authenticated associations; any one may match (including
+  during certificate rotation). Mismatches identify the affected address.
+- `DANE_TLSA_UNAVAILABLE` is informational when no certificate or usable
+  authenticated association is available. Missing evidence is not a mismatch.
+- `http.*.redirect_chain[].cookies` retains redacted attributes for each redirect
+  response, including redirects that were stopped. Final-response `cookies`
+  retains its original meaning. HTTPS cookie findings cover redirect and error
+  responses as well as successful pages.
+
+The legacy record-level `matches_presented_chain` remains an any-endpoint
+observation; use endpoint status and findings to detect a partially misconfigured
+hostname. These comparisons describe certificate association evidence, not a
+complete DANE trust-path validation.
 
 With `-http`, plain text also includes a bounded summary such as:
 
@@ -353,6 +400,40 @@ Absence of context-dependent controls such as Referrer Policy, Permissions
 Policy, `HttpOnly`, and `SameSite` is informational. Passive CORS headers are
 recorded without drawing a security conclusion because the request contains no
 `Origin` header.
+
+## Development and verification
+
+The code uses the standard library only. Responsibilities are separated into
+CLI (`main.go`), orchestration (`scan.go`), shared result types (`results.go`),
+DNS transport/parsing (`dns_wire.go`, `dns_records.go`), DNS inspection (`dns.go`),
+TLS/certificates (`tls.go`, `certificate.go`), findings (`findings.go`, `tlsa.go`),
+mail (`mail.go`), rendering (`output.go`), and the `http*.go` modules.
+
+Tests use injected dependencies and loopback servers, never public scan targets.
+Allow local listeners when running them. Build to a temporary path to preserve
+the checked-in macOS binary:
+
+```sh
+gofmt -w *.go
+go test -race -cover ./...
+go vet ./...
+go build -o /tmp/mpdc .
+/tmp/mpdc -version
+/tmp/mpdc -schema-capabilities
+git diff --check
+```
+
+DNS parser fuzzing is offline:
+
+```sh
+go test -run '^$' -fuzz '^FuzzDNSResponse$' -fuzztime=10s -parallel=2
+go test -run '^$' -fuzz '^FuzzDNSName$' -fuzztime=10s -parallel=2
+```
+
+GitHub Actions runs formatting, race-enabled tests, vet and build/preflight checks
+on Linux and macOS, plus short fuzz runs on Linux. Legacy JSON fixtures under
+`testdata/` protect schema-2 field names, types, omission behaviour, and the
+array-shaped output contract. They are baselines, not generated build artifacts.
 
 ## License
 

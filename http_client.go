@@ -18,17 +18,17 @@ type httpFetchResult struct {
 	body []byte
 }
 
-func (scanner *httpScanner) fetchPage(rawURL, originalHost string, allowedHosts map[string]bool, bodyLimit int64, analyze bool) (HTTPPageResult, []byte) {
-	result := scanner.fetch(rawURL, originalHost, allowedHosts, bodyLimit)
+func (scanner *httpScanner) fetchPage(ctx context.Context, rawURL, originalHost string, allowedHosts map[string]bool, bodyLimit int64, analyze bool) (HTTPPageResult, []byte) {
+	result := scanner.fetch(ctx, rawURL, originalHost, allowedHosts, bodyLimit)
 	if analyze {
 		result.page.Findings = append(result.page.Findings,
 			evaluateHTTPPage(result.page, strings.HasPrefix(result.page.FinalURL, "https://"))...)
-		result.page.Findings = deduplicateFindings(result.page.Findings)
 	}
+	result.page.Findings = deduplicateFindings(result.page.Findings)
 	return result.page, result.body
 }
 
-func (scanner *httpScanner) fetch(rawURL, originalHost string, allowedHosts map[string]bool, bodyLimit int64) httpFetchResult {
+func (scanner *httpScanner) fetch(ctx context.Context, rawURL, originalHost string, allowedHosts map[string]bool, bodyLimit int64) httpFetchResult {
 	page := HTTPPageResult{RequestedURL: redactURLForOutput(rawURL), ContentLength: -1}
 	current, err := url.Parse(rawURL)
 	if err != nil {
@@ -55,7 +55,7 @@ func (scanner *httpScanner) fetch(rawURL, originalHost string, allowedHosts map[
 		}
 		visited[currentURLRaw] = true
 
-		response, remoteIP, err := scanner.doSingleRequest(current)
+		response, remoteIP, err := scanner.doSingleRequest(ctx, current)
 		if err != nil {
 			page.FinalURL = currentURL
 			page.finalURLRaw = currentURLRaw
@@ -76,11 +76,15 @@ func (scanner *httpScanner) fetch(rawURL, originalHost string, allowedHosts map[
 		page.ContentLength = response.ContentLength
 		page.SecurityHeaders = observeSecurityHeaders(response.Header)
 		page.Cookies = observeCookies(response.Header.Values("Set-Cookie"))
+		// Cookie attributes matter on redirects and error responses as well as 2xx pages.
+		if current.Scheme == "https" {
+			page.Findings = append(page.Findings, evaluateCookieFindings(currentURL, page.Cookies)...)
+		}
 
 		if isRedirectStatus(response.StatusCode) {
 			location := response.Header.Get("Location")
 			closeResponseBody(response.Body)
-			hop := RedirectHop{FromURL: currentURL, StatusCode: response.StatusCode, Location: redactURLForOutput(location)}
+			hop := RedirectHop{FromURL: currentURL, StatusCode: response.StatusCode, Location: redactURLForOutput(location), Cookies: page.Cookies}
 			if location == "" {
 				hop.StopReason = "missing_location"
 				page.RedirectChain = append(page.RedirectChain, hop)
@@ -188,7 +192,10 @@ func (dialer egressHTTPDialer) DialContext(ctx context.Context, network, address
 	return dialer.next.DialContext(ctx, network, address)
 }
 
-func (scanner *httpScanner) doSingleRequest(target *url.URL) (*http.Response, string, error) {
+func (scanner *httpScanner) doSingleRequest(ctx context.Context, target *url.URL) (*http.Response, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	if target.Scheme != "http" && target.Scheme != "https" {
 		return nil, "", fmt.Errorf("unsupported URL scheme %q", target.Scheme)
 	}
@@ -199,7 +206,7 @@ func (scanner *httpScanner) doSingleRequest(target *url.URL) (*http.Response, st
 	if err != nil {
 		return nil, "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), scanner.options.Timeout)
+	ctx, cancel := context.WithTimeout(ctx, scanner.options.Timeout)
 	addresses, err := scanner.resolver.LookupIPAddr(ctx, host)
 	if err != nil {
 		cancel()

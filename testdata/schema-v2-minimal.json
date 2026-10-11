@@ -1,0 +1,14 @@
+[
+  {
+    "schema_version": 2,
+    "hostname": "example.com",
+    "ips": null,
+    "reachable": false,
+    "issued": "0001-01-01T00:00:00Z",
+    "expiry": "0001-01-01T00:00:00Z",
+    "dns": {
+      "dnssec_status": "",
+      "authenticated_data": false
+    }
+  }
+]

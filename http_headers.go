@@ -52,7 +52,6 @@ func evaluateHTTPPage(page HTTPPageResult, secure bool) []Finding {
 		findings = append(findings, finding("SERVER_VERSION_DISCLOSURE", "info",
 			fmt.Sprintf("%s exposes an explicit software version in Server or X-Powered-By.", urlValue)))
 	}
-	findings = append(findings, evaluateCookieFindings(urlValue, page.Cookies)...)
 	if !isHTMLContentType(page.ContentType) {
 		return findings
 	}
